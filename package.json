@@ -10,7 +10,9 @@
   "dependencies": {
     "vue": "^3.3.4",
     "tdesign-vue-next": "^1.9.6",
-    "tdesign-icons-vue-next": "^0.2.3"
+    "tdesign-icons-vue-next": "^0.2.3",
+    "pixi.js": "^7.4.2",
+    "@pixi/graphics-extras": "^7.4.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.2.3",

@@ -1,0 +1,1022 @@
+<template>
+  <div class="enhanced-3d-waveform">
+    <div class="controls-panel">
+      <div class="panel-left">
+        <h3>🎵 3D 音频混音台</h3>
+        <div class="view-controls">
+          <t-button size="small" @click="setView('front')">正视图</t-button>
+          <t-button size="small" @click="setView('side')">侧视图</t-button>
+          <t-button size="small" @click="setView('top')">俯视图</t-button>
+          <t-button size="small" @click="setView('free')">自由视角</t-button>
+        </div>
+      </div>
+      
+      <div class="panel-center">
+        <div class="master-controls">
+          <t-button 
+            size="large"
+            :theme="globalPlaying ? 'danger' : 'primary'"
+            @click="toggleGlobalPlayback"
+          >
+            {{ globalPlaying ? '⏸️ 暂停' : '▶️ 播放' }}
+          </t-button>
+          
+          <div class="master-volume">
+            <span>主音量</span>
+            <t-slider 
+              v-model="masterVolume" 
+              :min="0" 
+              :max="100"
+              @change="updateMasterVolume"
+            />
+          </div>
+        </div>
+      </div>
+      
+      <div class="panel-right">
+        <div class="effect-controls">
+          <t-switch v-model="effects.particles" label="粒子效果" />
+          <t-switch v-model="effects.glow" label="发光效果" />
+          <t-switch v-model="effects.reflection" label="反射效果" />
+          <t-switch v-model="effects.bloom" label="光晕效果" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 3D Canvas 区域 -->
+    <div 
+      ref="canvasContainer" 
+      class="canvas-3d-container"
+      @mousedown="handleMouseDown"
+      @mousemove="handleMouseMove"
+      @mouseup="handleMouseUp"
+      @wheel="handleWheel"
+      @contextmenu.prevent
+    >
+      <div class="loading-indicator" v-if="isLoading">
+        <t-loading size="large" text="加载3D引擎中..." />
+      </div>
+    </div>
+
+    <!-- 轨道控制面板 -->
+    <div class="tracks-control-panel">
+      <div 
+        v-for="track in tracks" 
+        :key="track.id"
+        class="track-controller"
+        :class="{ 
+          active: track.id === selectedTrack,
+          muted: track.isMuted,
+          solo: track.isSolo
+        }"
+      >
+        <div class="track-header">
+          <div class="track-icon" :style="{ background: track.color }">
+            {{ track.type }}
+          </div>
+          <div class="track-info">
+            <h4>{{ track.name }}</h4>
+            <span class="track-stats">{{ track.duration }}s | {{ track.sampleRate }}Hz</span>
+          </div>
+        </div>
+        
+        <div class="track-controls">
+          <div class="volume-control">
+            <t-slider 
+              v-model="track.volume" 
+              :min="0" 
+              :max="100"
+              size="small"
+              @change="updateTrackVolume(track.id, $event)"
+            />
+            <span class="volume-label">{{ track.volume }}%</span>
+          </div>
+          
+          <div class="track-buttons">
+            <t-button 
+              size="small"
+              :theme="track.isSolo ? 'warning' : 'default'"
+              @click="toggleSolo(track.id)"
+            >
+              SOLO
+            </t-button>
+            <t-button 
+              size="small"
+              :theme="track.isMuted ? 'danger' : 'default'"
+              @click="toggleMute(track.id)"
+            >
+              MUTE
+            </t-button>
+            <t-button 
+              size="small"
+              theme="primary"
+              @click="selectTrack(track.id)"
+            >
+              SELECT
+            </t-button>
+          </div>
+        </div>
+        
+        <div class="track-effects">
+          <div class="eq-visualizer">
+            <div 
+              v-for="(band, index) in track.eqBands" 
+              :key="index"
+              class="eq-band"
+              :style="{ 
+                height: band.value + '%',
+                backgroundColor: track.color,
+                opacity: 0.7 + band.value * 0.003
+              }"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import * as PIXI from 'pixi.js'
+
+// 响应式状态
+const canvasContainer = ref(null)
+const isLoading = ref(true)
+const selectedTrack = ref(1)
+const globalPlaying = ref(false)
+const masterVolume = ref(75)
+const currentView = ref('free')
+
+// 3D相机控制
+const camera = ref({
+  x: 0,
+  y: 0, 
+  z: 8,
+  rotX: 0,
+  rotY: 0,
+  rotZ: 0,
+  fov: 60
+})
+
+// 鼠标控制
+const mouse = ref({
+  isDown: false,
+  lastX: 0,
+  lastY: 0,
+  sensitivity: 0.5
+})
+
+// 效果开关
+const effects = ref({
+  particles: true,
+  glow: true,
+  reflection: true,
+  bloom: true
+})
+
+// PixiJS 实例
+let app = null
+let stage3D = null
+let trackMeshes = []
+let particleSystems = []
+let reflectionLayer = null
+
+// 轨道数据
+const tracks = ref([
+  {
+    id: 1,
+    name: '星辰大海',
+    type: 'LEAD',
+    color: '#e879f9',
+    duration: 43,
+    volume: 80,
+    sampleRate: 44100,
+    waveformData: [],
+    eqBands: [],
+    isSolo: false,
+    isMuted: false,
+    isPlaying: false
+  },
+  {
+    id: 2,
+    name: '空灵笛声',
+    type: 'WIND',
+    color: '#10b981',
+    duration: 28,
+    volume: 65,
+    sampleRate: 48000,
+    waveformData: [],
+    eqBands: [],
+    isSolo: false,
+    isMuted: false,
+    isPlaying: false
+  },
+  {
+    id: 3,
+    name: '雷鸣鼓点',
+    type: 'PERC',
+    color: '#f59e0b',
+    duration: 35,
+    volume: 90,
+    sampleRate: 44100,
+    waveformData: [],
+    eqBands: [],
+    isSolo: false,
+    isMuted: false,
+    isPlaying: false
+  },
+  {
+    id: 4,
+    name: '深邃贝斯',
+    type: 'BASS',
+    color: '#3b82f6',
+    duration: 40,
+    volume: 70,
+    sampleRate: 44100,
+    waveformData: [],
+    eqBands: [],
+    isSolo: false,
+    isMuted: false,
+    isPlaying: false
+  },
+  {
+    id: 5,
+    name: '天籁和声',
+    type: 'PAD',
+    color: '#ef4444',
+    duration: 50,
+    volume: 55,
+    sampleRate: 96000,
+    waveformData: [],
+    eqBands: [],
+    isSolo: false,
+    isMuted: false,
+    isPlaying: false
+  }
+])
+
+// 生成高质量波形数据
+function generateAdvancedWaveform(track) {
+  const pointsPerSecond = 60
+  const totalPoints = track.duration * pointsPerSecond
+  const waveform = []
+  
+  for (let i = 0; i < totalPoints; i++) {
+    const time = i / pointsPerSecond
+    const progress = i / totalPoints
+    
+    // 基础波形
+    let amplitude = Math.sin(time * 2 * Math.PI) * 0.5
+    
+    // 添加谐波
+    amplitude += Math.sin(time * 4 * Math.PI) * 0.3
+    amplitude += Math.sin(time * 8 * Math.PI) * 0.2
+    
+    // 根据轨道类型调整波形特征
+    switch(track.type) {
+      case 'LEAD':
+        amplitude *= Math.sin(progress * Math.PI) // 渐变包络
+        break
+      case 'BASS':
+        amplitude *= 1.5 // 更强的低频
+        amplitude = Math.sign(amplitude) * Math.pow(Math.abs(amplitude), 0.7)
+        break
+      case 'PERC':
+        // 脉冲波形
+        if (Math.sin(time * 8) > 0.8) amplitude *= 3
+        break
+      case 'PAD':
+        amplitude *= 0.8 // 更柔和
+        amplitude += Math.random() * 0.1 - 0.05 // 微小噪音
+        break
+    }
+    
+    // 归一化并添加随机变化
+    amplitude = Math.max(-1, Math.min(1, amplitude))
+    amplitude += (Math.random() - 0.5) * 0.1
+    
+    waveform.push({
+      time,
+      amplitude: Math.abs(amplitude),
+      phase: amplitude >= 0 ? 1 : -1,
+      frequency: 440 + amplitude * 220
+    })
+  }
+  
+  return waveform
+}
+
+// 生成EQ频段数据
+function generateEQBands(track) {
+  const bands = []
+  const bandCount = 16
+  
+  for (let i = 0; i < bandCount; i++) {
+    const frequency = 20 * Math.pow(2, (i / bandCount) * 10) // 20Hz to 20kHz
+    let value = Math.random() * 50 + 10
+    
+    // 根据轨道类型调整EQ
+    switch(track.type) {
+      case 'BASS':
+        if (i < 4) value *= 2 // 增强低频
+        break
+      case 'LEAD':
+        if (i > 8 && i < 12) value *= 1.5 // 增强中高频
+        break
+      case 'PERC':
+        if (i > 6 && i < 10) value *= 1.8 // 增强中频
+        break
+    }
+    
+    bands.push({ frequency, value: Math.min(80, value) })
+  }
+  
+  return bands
+}
+
+// 初始化3D场景
+async function init3DScene() {
+  if (!canvasContainer.value) return
+  
+  try {
+    // 创建PixiJS应用
+    app = new PIXI.Application({
+      width: canvasContainer.value.clientWidth,
+      height: 500,
+      antialias: true,
+      backgroundColor: 0x000000,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true
+    })
+    
+    canvasContainer.value.appendChild(app.view)
+    
+    // 创建3D舞台
+    stage3D = new PIXI.Container()
+    app.stage.addChild(stage3D)
+    
+    // 生成轨道数据
+    tracks.value.forEach(track => {
+      track.waveformData = generateAdvancedWaveform(track)
+      track.eqBands = generateEQBands(track)
+    })
+    
+    // 创建反射层
+    if (effects.value.reflection) {
+      createReflectionLayer()
+    }
+    
+    // 创建3D轨道
+    await create3DTracks()
+    
+    // 创建粒子系统
+    if (effects.value.particles) {
+      createParticleSystems()
+    }
+    
+    // 启动渲染循环
+    app.ticker.add(renderLoop)
+    
+    // 绑定窗口事件
+    window.addEventListener('resize', handleResize)
+    
+    isLoading.value = false
+    
+  } catch (error) {
+    console.error('3D场景初始化失败:', error)
+    isLoading.value = false
+  }
+}
+
+// 创建3D轨道
+async function create3DTracks() {
+  trackMeshes = []
+  
+  for (let i = 0; i < tracks.value.length; i++) {
+    const track = tracks.value[i]
+    const trackContainer = new PIXI.Container()
+    
+    // 计算轨道位置
+    const yPos = (i - tracks.value.length / 2) * 120
+    
+    // 创建轨道基础
+    const trackBase = createTrack3DBase(track, yPos)
+    trackContainer.addChild(trackBase)
+    
+    // 创建3D波形网格
+    const waveformMesh = create3DWaveformMesh(track, yPos)
+    trackContainer.addChild(waveformMesh)
+    
+    // 创建频谱分析器
+    const spectrumAnalyzer = createSpectrumAnalyzer(track, yPos)
+    trackContainer.addChild(spectrumAnalyzer)
+    
+    // 添加发光效果
+    if (effects.value.glow) {
+      const glowEffect = createGlowEffect(track, yPos)
+      trackContainer.addChild(glowEffect)
+    }
+    
+    stage3D.addChild(trackContainer)
+    
+    trackMeshes.push({
+      container: trackContainer,
+      base: trackBase,
+      waveform: waveformMesh,
+      spectrum: spectrumAnalyzer,
+      track: track,
+      yPosition: yPos
+    })
+  }
+}
+
+// 创建3D轨道基座
+function createTrack3DBase(track, yPos) {
+  const graphics = new PIXI.Graphics()
+  const width = 800
+  const height = 80
+  const depth = 20
+  
+  // 主体颜色
+  const color = PIXI.utils.hex2rgb(track.color)
+  
+  // 绘制3D基座
+  graphics.beginFill(color, 0.4)
+  graphics.drawRoundedRect(-width/2, yPos - height/2, width, height, 12)
+  graphics.endFill()
+  
+  // 绘制3D边缘效果
+  graphics.beginFill(color, 0.6)
+  graphics.drawRoundedRect(-width/2, yPos - height/2, width, 8, 12) // 顶部高光
+  graphics.drawRoundedRect(-width/2, yPos + height/2 - 8, width, 8, 12) // 底部阴影
+  graphics.endFill()
+  
+  // 绘制侧面
+  graphics.beginFill(color, 0.3)
+  graphics.moveTo(-width/2 + depth, yPos - height/2 + depth)
+  graphics.lineTo(width/2 + depth, yPos - height/2 + depth)
+  graphics.lineTo(width/2 + depth, yPos + height/2 + depth)
+  graphics.lineTo(-width/2 + depth, yPos + height/2 + depth)
+  graphics.closePath()
+  graphics.endFill()
+  
+  return graphics
+}
+
+// 创建3D波形网格
+function create3DWaveformMesh(track, yPos) {
+  const waveformContainer = new PIXI.Container()
+  const waveformData = track.waveformData
+  const width = 800
+  const resolution = 4 // 每4个像素一个顶点，优化性能
+  
+  for (let i = 0; i < waveformData.length; i += resolution) {
+    const point = waveformData[i]
+    const x = (i / waveformData.length) * width - width/2
+    const amplitude = point.amplitude * 60
+    
+    // 创建3D柱状图
+    const bar = new PIXI.Graphics()
+    const color = PIXI.utils.hex2rgb(track.color)
+    
+    // 主柱体
+    bar.beginFill(color, 0.8)
+    bar.drawRect(x - 1, yPos - amplitude/2, 2, amplitude)
+    bar.endFill()
+    
+    // 顶部高光
+    bar.beginFill(0xffffff, 0.4)
+    bar.drawRect(x - 1, yPos - amplitude/2, 2, Math.min(amplitude * 0.2, 8))
+    bar.endFill()
+    
+    // 3D深度效果
+    bar.beginFill(color, 0.5)
+    bar.drawRect(x + 1, yPos - amplitude/2 + 2, 2, amplitude)
+    bar.endFill()
+    
+    waveformContainer.addChild(bar)
+  }
+  
+  return waveformContainer
+}
+
+// 创建频谱分析器
+function createSpectrumAnalyzer(track, yPos) {
+  const spectrumContainer = new PIXI.Container()
+  const eqBands = track.eqBands
+  const width = 800
+  const bandWidth = width / eqBands.length
+  
+  eqBands.forEach((band, index) => {
+    const x = index * bandWidth - width/2
+    const height = band.value * 0.8
+    
+    const barGraphics = new PIXI.Graphics()
+    const color = PIXI.utils.hex2rgb(track.color)
+    
+    // EQ柱状图
+    barGraphics.beginFill(color, 0.6)
+    barGraphics.drawRect(x, yPos + 30, bandWidth - 2, height)
+    barGraphics.endFill()
+    
+    spectrumContainer.addChild(barGraphics)
+  })
+  
+  return spectrumContainer
+}
+
+// 创建发光效果
+function createGlowEffect(track, yPos) {
+  const glowContainer = new PIXI.Container()
+  
+  // 创建发光光圈
+  const glow = new PIXI.Graphics()
+  const color = PIXI.utils.hex2rgb(track.color)
+  
+  glow.beginFill(color, 0.1)
+  glow.drawEllipse(0, yPos, 850, 100)
+  glow.endFill()
+  
+  glow.beginFill(color, 0.05)
+  glow.drawEllipse(0, yPos, 900, 120)
+  glow.endFill()
+  
+  glowContainer.addChild(glow)
+  return glowContainer
+}
+
+// 创建反射层
+function createReflectionLayer() {
+  reflectionLayer = new PIXI.Container()
+  reflectionLayer.alpha = 0.3
+  reflectionLayer.scale.y = -0.5
+  reflectionLayer.y = 300
+  stage3D.addChild(reflectionLayer)
+}
+
+// 创建粒子系统
+function createParticleSystems() {
+  particleSystems = []
+  
+  tracks.value.forEach((track, index) => {
+    const particleSystem = createTrackParticles(track, index)
+    stage3D.addChild(particleSystem.container)
+    particleSystems.push(particleSystem)
+  })
+}
+
+function createTrackParticles(track, trackIndex) {
+  const container = new PIXI.Container()
+  const particles = []
+  const particleCount = 50
+  
+  for (let i = 0; i < particleCount; i++) {
+    const particle = new PIXI.Graphics()
+    const size = Math.random() * 3 + 1
+    
+    particle.beginFill(PIXI.utils.hex2rgb(track.color), 0.7)
+    particle.drawCircle(0, 0, size)
+    particle.endFill()
+    
+    // 粒子属性
+    particle.x = (Math.random() - 0.5) * 800
+    particle.y = (trackIndex - tracks.value.length / 2) * 120
+    particle.vx = (Math.random() - 0.5) * 2
+    particle.vy = (Math.random() - 0.5) * 2
+    particle.life = Math.random()
+    particle.maxLife = particle.life
+    
+    container.addChild(particle)
+    particles.push(particle)
+  }
+  
+  return { container, particles, track }
+}
+
+// 渲染循环
+function renderLoop() {
+  if (!stage3D) return
+  
+  // 应用3D变换
+  apply3DTransforms()
+  
+  // 更新轨道动画
+  updateTrackAnimations()
+  
+  // 更新粒子系统
+  if (effects.value.particles) {
+    updateParticleSystems()
+  }
+  
+  // 更新EQ可视化
+  updateEQVisualization()
+}
+
+// 应用3D变换
+function apply3DTransforms() {
+  const cam = camera.value
+  
+  // 设置舞台位置和缩放
+  stage3D.x = app.screen.width / 2 + cam.x
+  stage3D.y = app.screen.height / 2 + cam.y
+  
+  const scale = 1 + cam.z * 0.05
+  stage3D.scale.set(scale)
+  
+  // 应用旋转
+  stage3D.rotation = cam.rotZ * 0.01
+  
+  // 应用3D透视效果
+  trackMeshes.forEach((mesh, index) => {
+    const rotEffect = Math.sin(cam.rotY * 0.005) * 0.3
+    mesh.container.skew.x = rotEffect
+    mesh.container.scale.y = 1 - Math.abs(rotEffect) * 0.1
+    
+    // 深度排序
+    const depth = Math.cos(cam.rotY * 0.005 + index * 0.5)
+    mesh.container.zIndex = depth
+  })
+  
+  // 更新反射层
+  if (reflectionLayer) {
+    reflectionLayer.x = stage3D.x
+    reflectionLayer.y = app.screen.height - stage3D.y + 200
+    reflectionLayer.scale.x = stage3D.scale.x
+    reflectionLayer.scale.y = -stage3D.scale.y * 0.5
+  }
+}
+
+// 更新轨道动画
+function updateTrackAnimations() {
+  const time = Date.now() * 0.001
+  
+  trackMeshes.forEach((mesh, index) => {
+    const track = mesh.track
+    
+    if (globalPlaying.value && !track.isMuted) {
+      // 波形跳动动画
+      if (mesh.waveform && mesh.waveform.children) {
+        mesh.waveform.children.forEach((bar, i) => {
+          const wave = Math.sin(time * 4 + i * 0.1 + index * 0.5) * 0.15 + 1
+          bar.scale.y = wave
+          bar.alpha = 0.8 + wave * 0.2
+        })
+      }
+      
+      // 基座脉冲效果
+      const pulse = Math.sin(time * 3 + index) * 0.2 + 1
+      mesh.base.scale.y = pulse
+      mesh.base.alpha = 0.7 + pulse * 0.3
+    }
+  })
+}
+
+// 更新粒子系统
+function updateParticleSystems() {
+  particleSystems.forEach((system) => {
+    if (!system.track.isMuted && globalPlaying.value) {
+      system.particles.forEach((particle) => {
+        // 更新位置
+        particle.x += particle.vx
+        particle.y += particle.vy
+        
+        // 更新生命周期
+        particle.life -= 0.01
+        particle.alpha = particle.life / particle.maxLife
+        
+        // 重置粒子
+        if (particle.life <= 0) {
+          particle.x = (Math.random() - 0.5) * 800
+          particle.y = (Math.random() - 0.5) * 600
+          particle.life = particle.maxLife
+          particle.vx = (Math.random() - 0.5) * 2
+          particle.vy = (Math.random() - 0.5) * 2
+        }
+      })
+    }
+  })
+}
+
+// 更新EQ可视化
+function updateEQVisualization() {
+  if (!globalPlaying.value) return
+  
+  tracks.value.forEach((track) => {
+    if (!track.isMuted) {
+      track.eqBands.forEach((band) => {
+        // 模拟实时EQ变化
+        const variation = (Math.random() - 0.5) * 10
+        band.value = Math.max(5, Math.min(80, band.value + variation))
+      })
+    }
+  })
+}
+
+// 鼠标事件处理
+function handleMouseDown(event) {
+  mouse.value.isDown = true
+  mouse.value.lastX = event.clientX
+  mouse.value.lastY = event.clientY
+}
+
+function handleMouseMove(event) {
+  if (!mouse.value.isDown) return
+  
+  const deltaX = event.clientX - mouse.value.lastX
+  const deltaY = event.clientY - mouse.value.lastY
+  
+  if (currentView.value === 'free') {
+    camera.value.rotY += deltaX * mouse.value.sensitivity
+    camera.value.rotX += deltaY * mouse.value.sensitivity
+  }
+  
+  mouse.value.lastX = event.clientX
+  mouse.value.lastY = event.clientY
+}
+
+function handleMouseUp() {
+  mouse.value.isDown = false
+}
+
+function handleWheel(event) {
+  event.preventDefault()
+  camera.value.z += event.deltaY * 0.002
+  camera.value.z = Math.max(2, Math.min(15, camera.value.z))
+}
+
+// 窗口大小调整
+function handleResize() {
+  if (app && canvasContainer.value) {
+    app.renderer.resize(canvasContainer.value.clientWidth, 500)
+  }
+}
+
+// 控制函数
+function toggleGlobalPlayback() {
+  globalPlaying.value = !globalPlaying.value
+  tracks.value.forEach(track => {
+    track.isPlaying = globalPlaying.value && !track.isMuted
+  })
+}
+
+function selectTrack(trackId) {
+  selectedTrack.value = trackId
+}
+
+function toggleSolo(trackId) {
+  const track = tracks.value.find(t => t.id === trackId)
+  if (track) {
+    track.isSolo = !track.isSolo
+  }
+}
+
+function toggleMute(trackId) {
+  const track = tracks.value.find(t => t.id === trackId)
+  if (track) {
+    track.isMuted = !track.isMuted
+  }
+}
+
+function updateTrackVolume(trackId, volume) {
+  const track = tracks.value.find(t => t.id === trackId)
+  if (track) {
+    track.volume = volume
+  }
+}
+
+function updateMasterVolume(volume) {
+  masterVolume.value = volume
+  // 应用主音量到所有轨道
+}
+
+function setView(viewType) {
+  currentView.value = viewType
+  
+  switch(viewType) {
+    case 'front':
+      camera.value.rotX = 0
+      camera.value.rotY = 0
+      camera.value.z = 8
+      break
+    case 'side':
+      camera.value.rotX = 0
+      camera.value.rotY = 90
+      camera.value.z = 10
+      break
+    case 'top':
+      camera.value.rotX = 90
+      camera.value.rotY = 0
+      camera.value.z = 12
+      break
+    case 'free':
+      // 保持当前位置
+      break
+  }
+}
+
+// 生命周期
+onMounted(async () => {
+  await nextTick()
+  await init3DScene()
+})
+
+onUnmounted(() => {
+  if (app) {
+    window.removeEventListener('resize', handleResize)
+    app.destroy(true)
+  }
+})
+</script>
+
+<style scoped>
+.enhanced-3d-waveform {
+  width: 100%;
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+  border-radius: 16px;
+  overflow: hidden;
+  border: 2px solid #333;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.controls-panel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 2px solid #333;
+  backdrop-filter: blur(10px);
+}
+
+.panel-left h3 {
+  color: #fff;
+  margin: 0 0 12px 0;
+  font-size: 18px;
+  font-weight: bold;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.view-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.master-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.master-volume {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #fff;
+  font-size: 14px;
+}
+
+.effect-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.canvas-3d-container {
+  width: 100%;
+  height: 500px;
+  position: relative;
+  cursor: grab;
+  background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0a 100%);
+}
+
+.canvas-3d-container:active {
+  cursor: grabbing;
+}
+
+.loading-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+}
+
+.tracks-control-panel {
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.4);
+  border-top: 2px solid #333;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.track-controller {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 16px;
+  border: 2px solid transparent;
+  transition: all 0.3s ease;
+}
+
+.track-controller:hover {
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.track-controller.active {
+  border-color: #409eff;
+  background: rgba(64, 158, 255, 0.15);
+}
+
+.track-controller.muted {
+  opacity: 0.5;
+  filter: grayscale(0.7);
+}
+
+.track-controller.solo {
+  border-color: #e6a23c;
+  background: rgba(230, 162, 60, 0.15);
+}
+
+.track-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.track-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: bold;
+  font-size: 16px;
+  margin-right: 16px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.track-info h4 {
+  color: #fff;
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.track-stats {
+  color: #999;
+  font-size: 12px;
+}
+
+.track-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  margin-right: 16px;
+}
+
+.volume-label {
+  color: #fff;
+  font-size: 12px;
+  min-width: 32px;
+}
+
+.track-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.track-effects {
+  margin-top: 16px;
+}
+
+.eq-visualizer {
+  display: flex;
+  align-items: end;
+  height: 60px;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.eq-band {
+  flex: 1;
+  min-height: 4px;
+  border-radius: 2px;
+  transition: all 0.1s ease;
+}
+</style>
