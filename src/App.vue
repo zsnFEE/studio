@@ -54,9 +54,9 @@
     </div>
 
     <!-- 多轨道波形显示 -->
-    <div class="waveform-section">
-      <Enhanced3DWaveform />
-    </div>
+<div class="waveform-section">
+<Simple2DWaveform />
+</div>
   </div>
 </template>
 
@@ -64,7 +64,7 @@
 import { ref } from 'vue'
 import AudioClipItem from './components/AudioClipItem.vue'
 import TimelineControls from './components/TimelineControls.vue'
-import Enhanced3DWaveform from './components/Enhanced3DWaveform.vue'
+import Simple2DWaveform from './components/Simple2DWaveform.vue'
 
 const activeTab = ref('sound')
 const searchValue = ref('')
