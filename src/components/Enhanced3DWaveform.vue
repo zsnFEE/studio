@@ -415,6 +415,16 @@ async function init3DScene() {
 async function create3DTracks() {
   trackMeshes = []
   
+  // 首先为所有轨道生成波形数据
+  for (let track of tracks.value) {
+    if (!track.waveformData || track.waveformData.length === 0) {
+      track.waveformData = generateAdvancedWaveform(track)
+    }
+    if (!track.eqBands || track.eqBands.length === 0) {
+      track.eqBands = generateEQBands(track)
+    }
+  }
+  
   for (let i = 0; i < tracks.value.length; i++) {
     const track = tracks.value[i]
     const trackContainer = new PIXI.Container()
@@ -490,6 +500,13 @@ function createTrack3DBase(track, yPos) {
 function create3DWaveformMesh(track, yPos) {
   const waveformContainer = new PIXI.Container()
   const waveformData = track.waveformData
+  
+  // 数据验证
+  if (!waveformData || waveformData.length === 0) {
+    console.warn('波形数据为空，轨道:', track.name)
+    return waveformContainer
+  }
+  
   const width = 800
   const resolution = 2 // 提高分辨率，每2个像素一个顶点
   const maxAmplitude = 50 // 最大波形高度
@@ -503,34 +520,38 @@ function create3DWaveformMesh(track, yPos) {
     const nextX = ((i + resolution) / waveformData.length) * width - width/2
     
     // 左声道（上半部分）
-    const leftAmplitude = point.left * maxAmplitude
-    const nextLeftAmplitude = nextPoint.left * maxAmplitude
+    const leftAmplitude = (point.left || point.amplitude || 0) * maxAmplitude
+    const nextLeftAmplitude = (nextPoint.left || nextPoint.amplitude || 0) * maxAmplitude
     
     // 右声道（下半部分）  
-    const rightAmplitude = point.right * maxAmplitude
-    const nextRightAmplitude = nextPoint.right * maxAmplitude
+    const rightAmplitude = (point.right || point.amplitude || 0) * maxAmplitude
+    const nextRightAmplitude = (nextPoint.right || nextPoint.amplitude || 0) * maxAmplitude
     
     // 创建波形条
     const waveBar = new PIXI.Graphics()
     const color = PIXI.utils.hex2rgb(track.color)
     
     // 绘制左声道波形（向上）
-    waveBar.beginFill(color, 0.85)
-    waveBar.moveTo(x, baselineY)
-    waveBar.lineTo(x, baselineY - leftAmplitude)
-    waveBar.lineTo(nextX, baselineY - nextLeftAmplitude)
-    waveBar.lineTo(nextX, baselineY)
-    waveBar.closePath()
-    waveBar.endFill()
+    if (leftAmplitude > 0 || nextLeftAmplitude > 0) {
+      waveBar.beginFill(color, 0.85)
+      waveBar.moveTo(x, baselineY)
+      waveBar.lineTo(x, baselineY - leftAmplitude)
+      waveBar.lineTo(nextX, baselineY - nextLeftAmplitude)
+      waveBar.lineTo(nextX, baselineY)
+      waveBar.closePath()
+      waveBar.endFill()
+    }
     
     // 绘制右声道波形（向下）
-    waveBar.beginFill(color, 0.75)
-    waveBar.moveTo(x, baselineY)
-    waveBar.lineTo(x, baselineY + rightAmplitude)
-    waveBar.lineTo(nextX, baselineY + nextRightAmplitude)
-    waveBar.lineTo(nextX, baselineY)
-    waveBar.closePath()
-    waveBar.endFill()
+    if (rightAmplitude > 0 || nextRightAmplitude > 0) {
+      waveBar.beginFill(color, 0.75)
+      waveBar.moveTo(x, baselineY)
+      waveBar.lineTo(x, baselineY + rightAmplitude)
+      waveBar.lineTo(nextX, baselineY + nextRightAmplitude)
+      waveBar.lineTo(nextX, baselineY)
+      waveBar.closePath()
+      waveBar.endFill()
+    }
     
     // 添加中心线
     if (i % (resolution * 4) === 0) {
@@ -567,6 +588,13 @@ function create3DWaveformMesh(track, yPos) {
 function createSpectrumAnalyzer(track, yPos) {
   const spectrumContainer = new PIXI.Container()
   const eqBands = track.eqBands
+  
+  // 数据验证
+  if (!eqBands || eqBands.length === 0) {
+    console.warn('EQ数据为空，轨道:', track.name)
+    return spectrumContainer
+  }
+  
   const width = 800
   const bandWidth = width / eqBands.length
   const maxHeight = 25 // 降低高度避免重叠
