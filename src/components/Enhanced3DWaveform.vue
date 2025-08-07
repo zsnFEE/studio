@@ -256,9 +256,9 @@ const tracks = ref([
   }
 ])
 
-// 生成高质量波形数据
+// 生成真实音频波形数据
 function generateAdvancedWaveform(track) {
-  const pointsPerSecond = 60
+  const pointsPerSecond = 100 // 增加密度
   const totalPoints = track.duration * pointsPerSecond
   const waveform = []
   
@@ -266,41 +266,63 @@ function generateAdvancedWaveform(track) {
     const time = i / pointsPerSecond
     const progress = i / totalPoints
     
-    // 基础波形
-    let amplitude = Math.sin(time * 2 * Math.PI) * 0.5
+    let amplitude = 0
     
-    // 添加谐波
-    amplitude += Math.sin(time * 4 * Math.PI) * 0.3
-    amplitude += Math.sin(time * 8 * Math.PI) * 0.2
-    
-    // 根据轨道类型调整波形特征
+    // 根据轨道类型生成不同的波形特征
     switch(track.type) {
-      case 'LEAD':
-        amplitude *= Math.sin(progress * Math.PI) // 渐变包络
+      case 'LEAD': // 主旋律 - 清晰的正弦波加谐波
+        amplitude = Math.sin(time * 4) * 0.8
+        amplitude += Math.sin(time * 8) * 0.3
+        amplitude += Math.sin(time * 16) * 0.1
+        amplitude *= Math.sin(progress * Math.PI) // 包络线
         break
-      case 'BASS':
-        amplitude *= 1.5 // 更强的低频
-        amplitude = Math.sign(amplitude) * Math.pow(Math.abs(amplitude), 0.7)
+        
+      case 'BASS': // 低音 - 方波特征
+        amplitude = Math.sign(Math.sin(time * 2)) * 0.9
+        amplitude += Math.sin(time * 4) * 0.2
+        amplitude *= (0.8 + Math.sin(time * 0.5) * 0.2) // 低频调制
         break
-      case 'PERC':
-        // 脉冲波形
-        if (Math.sin(time * 8) > 0.8) amplitude *= 3
+        
+      case 'PERC': // 打击乐 - 脉冲和瞬态
+        const beat = Math.floor(time * 4) % 4
+        if (beat === 0) {
+          amplitude = Math.exp(-((time % 1) * 8)) * Math.sin(time * 40) * 1.2
+        } else if (beat === 2) {
+          amplitude = Math.exp(-((time % 1) * 6)) * Math.sin(time * 30) * 0.8
+        } else {
+          amplitude = Math.exp(-((time % 1) * 12)) * Math.sin(time * 60) * 0.4
+        }
         break
-      case 'PAD':
-        amplitude *= 0.8 // 更柔和
-        amplitude += Math.random() * 0.1 - 0.05 // 微小噪音
+        
+      case 'WIND': // 管乐 - 平滑的正弦波
+        amplitude = Math.sin(time * 3 + Math.sin(time * 0.5)) * 0.7
+        amplitude += Math.sin(time * 6) * 0.2
+        amplitude *= (0.9 + Math.sin(time * 0.3) * 0.1) // 轻微颤音
         break
+        
+      case 'PAD': // 垫音 - 厚重的和弦
+        amplitude = Math.sin(time * 2) * 0.4
+        amplitude += Math.sin(time * 2.5) * 0.3
+        amplitude += Math.sin(time * 3) * 0.2
+        amplitude += Math.sin(time * 4) * 0.1
+        amplitude *= 0.8
+        break
+        
+      default:
+        amplitude = Math.sin(time * 4) * 0.6
     }
     
-    // 归一化并添加随机变化
-    amplitude = Math.max(-1, Math.min(1, amplitude))
-    amplitude += (Math.random() - 0.5) * 0.1
+    // 添加细微的随机变化模拟真实音频
+    amplitude += (Math.random() - 0.5) * 0.05
+    
+    // 归一化到 [0, 1] 范围
+    amplitude = Math.max(0, Math.min(1, Math.abs(amplitude)))
     
     waveform.push({
       time,
-      amplitude: Math.abs(amplitude),
-      phase: amplitude >= 0 ? 1 : -1,
-      frequency: 440 + amplitude * 220
+      amplitude,
+      left: amplitude * (0.9 + Math.random() * 0.2), // 立体声左声道
+      right: amplitude * (0.9 + Math.random() * 0.2) // 立体声右声道
     })
   }
   
@@ -469,34 +491,74 @@ function create3DWaveformMesh(track, yPos) {
   const waveformContainer = new PIXI.Container()
   const waveformData = track.waveformData
   const width = 800
-  const resolution = 4 // 每4个像素一个顶点，优化性能
+  const resolution = 2 // 提高分辨率，每2个像素一个顶点
+  const maxAmplitude = 50 // 最大波形高度
+  const baselineY = yPos // 波形基线位置
   
+  // 创建立体声波形（上下分别显示左右声道）
   for (let i = 0; i < waveformData.length; i += resolution) {
     const point = waveformData[i]
+    const nextPoint = waveformData[i + resolution] || point
     const x = (i / waveformData.length) * width - width/2
-    const amplitude = point.amplitude * 60
+    const nextX = ((i + resolution) / waveformData.length) * width - width/2
     
-    // 创建3D柱状图
-    const bar = new PIXI.Graphics()
+    // 左声道（上半部分）
+    const leftAmplitude = point.left * maxAmplitude
+    const nextLeftAmplitude = nextPoint.left * maxAmplitude
+    
+    // 右声道（下半部分）  
+    const rightAmplitude = point.right * maxAmplitude
+    const nextRightAmplitude = nextPoint.right * maxAmplitude
+    
+    // 创建波形条
+    const waveBar = new PIXI.Graphics()
     const color = PIXI.utils.hex2rgb(track.color)
     
-    // 主柱体
-    bar.beginFill(color, 0.8)
-    bar.drawRect(x - 1, yPos - amplitude/2, 2, amplitude)
-    bar.endFill()
+    // 绘制左声道波形（向上）
+    waveBar.beginFill(color, 0.85)
+    waveBar.moveTo(x, baselineY)
+    waveBar.lineTo(x, baselineY - leftAmplitude)
+    waveBar.lineTo(nextX, baselineY - nextLeftAmplitude)
+    waveBar.lineTo(nextX, baselineY)
+    waveBar.closePath()
+    waveBar.endFill()
     
-    // 顶部高光
-    bar.beginFill(0xffffff, 0.4)
-    bar.drawRect(x - 1, yPos - amplitude/2, 2, Math.min(amplitude * 0.2, 8))
-    bar.endFill()
+    // 绘制右声道波形（向下）
+    waveBar.beginFill(color, 0.75)
+    waveBar.moveTo(x, baselineY)
+    waveBar.lineTo(x, baselineY + rightAmplitude)
+    waveBar.lineTo(nextX, baselineY + nextRightAmplitude)
+    waveBar.lineTo(nextX, baselineY)
+    waveBar.closePath()
+    waveBar.endFill()
     
-    // 3D深度效果
-    bar.beginFill(color, 0.5)
-    bar.drawRect(x + 1, yPos - amplitude/2 + 2, 2, amplitude)
-    bar.endFill()
+    // 添加中心线
+    if (i % (resolution * 4) === 0) {
+      waveBar.lineStyle(1, color, 0.3)
+      waveBar.moveTo(x, baselineY - maxAmplitude * 0.1)
+      waveBar.lineTo(x, baselineY + maxAmplitude * 0.1)
+    }
     
-    waveformContainer.addChild(bar)
+    // 添加高光效果
+    const glowIntensity = Math.max(leftAmplitude, rightAmplitude) / maxAmplitude
+    if (glowIntensity > 0.5) {
+      waveBar.beginFill(0xffffff, (glowIntensity - 0.5) * 0.4)
+      waveBar.moveTo(x, baselineY)
+      waveBar.lineTo(x, baselineY - leftAmplitude * 0.3)
+      waveBar.lineTo(nextX, baselineY - nextLeftAmplitude * 0.3)
+      waveBar.lineTo(nextX, baselineY)
+      waveBar.closePath()
+      waveBar.endFill()
+    }
+    
+    waveformContainer.addChild(waveBar)
   }
+  
+  // 添加波形边框
+  const border = new PIXI.Graphics()
+  border.lineStyle(2, PIXI.utils.hex2rgb(track.color), 0.6)
+  border.drawRoundedRect(-width/2 - 5, baselineY - maxAmplitude - 5, width + 10, maxAmplitude * 2 + 10, 4)
+  waveformContainer.addChild(border)
   
   return waveformContainer
 }
@@ -507,21 +569,48 @@ function createSpectrumAnalyzer(track, yPos) {
   const eqBands = track.eqBands
   const width = 800
   const bandWidth = width / eqBands.length
+  const maxHeight = 25 // 降低高度避免重叠
+  const offsetY = 65 // 向下偏移更多避免与波形重叠
   
   eqBands.forEach((band, index) => {
     const x = index * bandWidth - width/2
-    const height = band.value * 0.8
+    const height = (band.value / 80) * maxHeight // 归一化高度
     
     const barGraphics = new PIXI.Graphics()
     const color = PIXI.utils.hex2rgb(track.color)
     
-    // EQ柱状图
-    barGraphics.beginFill(color, 0.6)
-    barGraphics.drawRect(x, yPos + 30, bandWidth - 2, height)
-    barGraphics.endFill()
+    // EQ柱状图 - 渐变效果
+    const gradient = new PIXI.Graphics()
     
-    spectrumContainer.addChild(barGraphics)
+    // 主体
+    gradient.beginFill(color, 0.4)
+    gradient.drawRect(x, yPos + offsetY, bandWidth - 2, height)
+    gradient.endFill()
+    
+    // 顶部高亮
+    gradient.beginFill(color, 0.8)
+    gradient.drawRect(x, yPos + offsetY, bandWidth - 2, Math.min(height, 3))
+    gradient.endFill()
+    
+    // 添加频率标签（仅在特定位置）
+    if (index % 4 === 0) {
+      const freqLabel = new PIXI.Graphics()
+      freqLabel.lineStyle(1, color, 0.3)
+      freqLabel.moveTo(x + (bandWidth - 2) / 2, yPos + offsetY)
+      freqLabel.lineTo(x + (bandWidth - 2) / 2, yPos + offsetY + maxHeight + 5)
+      gradient.addChild(freqLabel)
+    }
+    
+    spectrumContainer.addChild(gradient)
   })
+  
+  // 添加频谱背景框
+  const spectrumBg = new PIXI.Graphics()
+  spectrumBg.beginFill(0x000000, 0.2)
+  spectrumBg.lineStyle(1, PIXI.utils.hex2rgb(track.color), 0.3)
+  spectrumBg.drawRoundedRect(-width/2 - 2, yPos + offsetY - 2, width + 4, maxHeight + 4, 4)
+  spectrumBg.endFill()
+  spectrumContainer.addChildAt(spectrumBg, 0)
   
   return spectrumContainer
 }
@@ -655,19 +744,59 @@ function updateTrackAnimations() {
     const track = mesh.track
     
     if (globalPlaying.value && !track.isMuted) {
-      // 波形跳动动画
+      // 波形动态效果
       if (mesh.waveform && mesh.waveform.children) {
-        mesh.waveform.children.forEach((bar, i) => {
-          const wave = Math.sin(time * 4 + i * 0.1 + index * 0.5) * 0.15 + 1
-          bar.scale.y = wave
-          bar.alpha = 0.8 + wave * 0.2
+        mesh.waveform.children.forEach((waveBar, i) => {
+          if (waveBar.children) return // 跳过边框元素
+          
+          // 根据音轨类型调整动画频率
+          let animationSpeed = 4
+          switch(track.type) {
+            case 'PERC':
+              animationSpeed = 8 // 打击乐更快节奏
+              break
+            case 'BASS':
+              animationSpeed = 2 // 低音更慢节奏
+              break
+            case 'LEAD':
+              animationSpeed = 6 // 主旋律中等速度
+              break
+            default:
+              animationSpeed = 4
+          }
+          
+          const wave = Math.sin(time * animationSpeed + i * 0.05 + index) * 0.1 + 1
+          const intensity = Math.sin(time * 2 + index) * 0.2 + 0.9
+          
+          // 应用缩放和透明度动画
+          waveBar.scale.set(1, wave)
+          waveBar.alpha = intensity
+          
+          // 添加轻微的位置抖动（模拟音频振动）
+          waveBar.y = Math.sin(time * 10 + i * 0.2) * 0.5
         })
       }
       
       // 基座脉冲效果
-      const pulse = Math.sin(time * 3 + index) * 0.2 + 1
+      const pulse = Math.sin(time * 2 + index * 0.7) * 0.15 + 1
       mesh.base.scale.y = pulse
-      mesh.base.alpha = 0.7 + pulse * 0.3
+      mesh.base.alpha = 0.6 + pulse * 0.4
+      
+      // 添加轻微的旋转效果
+      mesh.container.rotation = Math.sin(time * 0.5 + index) * 0.02
+    } else {
+      // 静止状态时逐渐恢复原位
+      if (mesh.waveform && mesh.waveform.children) {
+        mesh.waveform.children.forEach((waveBar) => {
+          if (waveBar.children) return
+          waveBar.scale.set(1, 1)
+          waveBar.alpha = 0.7
+          waveBar.y = 0
+        })
+      }
+      mesh.base.scale.y = 1
+      mesh.base.alpha = 0.5
+      mesh.container.rotation = 0
     }
   })
 }
