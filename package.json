@@ -1,0 +1,19 @@
+{
+  "name": "audio-editor-vue3",
+  "version": "1.0.0",
+  "description": "音频编辑器界面 - Vue3 + T-Design",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.3.4",
+    "tdesign-vue-next": "^1.9.6",
+    "tdesign-icons-vue-next": "^0.2.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.2.3",
+    "vite": "^4.4.5"
+  }
+}
