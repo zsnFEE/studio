@@ -296,8 +296,13 @@ function generateWaveformData(track) {
 
 // 检测OffscreenCanvas支持
 function supportsOffscreenCanvas() {
-  return typeof OffscreenCanvas !== 'undefined' && 
-         typeof OffscreenCanvas.prototype.getContext !== 'undefined'
+  try {
+    return typeof OffscreenCanvas !== 'undefined' && 
+           typeof OffscreenCanvas.prototype.getContext !== 'undefined' &&
+           typeof OffscreenCanvas.prototype.transferToImageBitmap !== 'undefined'
+  } catch (e) {
+    return false
+  }
 }
 
 // 初始化 PixiJS
@@ -305,92 +310,133 @@ async function initPixi() {
   const container = pixiContainer.value
   if (!container) return
 
-  // 尝试使用OffscreenCanvas
-  const pixiOptions = {
-    width: container.clientWidth,
-    height: container.clientHeight,
-    backgroundColor: 0x1a1a1a,
-    antialias: true,
-    resolution: window.devicePixelRatio || 1,
-    autoDensity: true,
-    powerPreference: 'high-performance'
-  }
+  // 基础配置
+  const width = container.clientWidth || 800
+  const height = container.clientHeight || 600
 
-  // 如果支持OffscreenCanvas，尝试使用
-  if (supportsOffscreenCanvas()) {
-    try {
-      console.log('🚀 使用OffscreenCanvas进行硬件加速渲染')
-      
-      // 创建OffscreenCanvas
-      const offscreenCanvas = new OffscreenCanvas(
-        container.clientWidth, 
-        container.clientHeight
-      )
-      
-      pixiOptions.view = offscreenCanvas
-      app = new PIXI.Application(pixiOptions)
-      
-      // 将OffscreenCanvas内容转移到主canvas
-      const mainCanvas = document.createElement('canvas')
-      mainCanvas.width = container.clientWidth
-      mainCanvas.height = container.clientHeight
-      mainCanvas.style.width = '100%'
-      mainCanvas.style.height = '100%'
-      container.appendChild(mainCanvas)
-      
-      // 设置转移渲染
-      const mainCtx = mainCanvas.getContext('2d')
-      app.ticker.add(() => {
-        if (needsRedraw) {
-          const bitmap = offscreenCanvas.transferToImageBitmap()
-          mainCtx.clearRect(0, 0, mainCanvas.width, mainCanvas.height)
-          mainCtx.drawImage(bitmap, 0, 0)
-        }
-      })
-      
-    } catch (error) {
-      console.warn('OffscreenCanvas初始化失败，降级到标准Canvas:', error)
-      app = new PIXI.Application(pixiOptions)
-      container.appendChild(app.view)
+  try {
+    // 先尝试标准方式创建PixiJS应用
+    console.log('🎯 初始化PixiJS应用...')
+    
+    const pixiOptions = {
+      width,
+      height,
+      backgroundColor: 0x1a1a1a,
+      antialias: true,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+      powerPreference: 'high-performance'
     }
-  } else {
-    console.log('📱 使用标准Canvas渲染 (OffscreenCanvas不支持)')
+
+    // 优先使用标准Canvas，确保稳定性
     app = new PIXI.Application(pixiOptions)
     container.appendChild(app.view)
+    console.log('✅ 标准Canvas初始化成功')
+
+    // 如果标准方式成功，可以尝试OffscreenCanvas优化（可选）
+    if (supportsOffscreenCanvas() && false) { // 暂时禁用OffscreenCanvas
+      try {
+        console.log('🚀 尝试OffscreenCanvas优化...')
+        
+        // 创建OffscreenCanvas作为渲染目标
+        const offscreenCanvas = new OffscreenCanvas(width, height)
+        const offscreenCtx = offscreenCanvas.getContext('2d')
+        
+        if (offscreenCtx) {
+          // 成功创建OffscreenCanvas上下文
+          console.log('✅ OffscreenCanvas上下文创建成功')
+          
+          // 这里可以添加OffscreenCanvas的额外优化逻辑
+          // 但保持主渲染路径使用标准Canvas确保稳定性
+        }
+      } catch (offscreenError) {
+        console.warn('⚠️ OffscreenCanvas优化失败，继续使用标准Canvas:', offscreenError)
+      }
+    }
+
+  } catch (error) {
+    console.error('❌ PixiJS初始化失败:', error)
+    
+    // 最后的降级方案 - 使用最基础的配置
+    try {
+      console.log('🔄 尝试基础配置降级...')
+      app = new PIXI.Application({
+        width: width,
+        height: height,
+        backgroundColor: 0x1a1a1a,
+        antialias: false, // 禁用抗锯齿
+        resolution: 1, // 固定分辨率
+        autoDensity: false
+      })
+      container.appendChild(app.view)
+      console.log('✅ 基础配置初始化成功')
+    } catch (fallbackError) {
+      console.error('💥 所有初始化方案都失败了:', fallbackError)
+      
+      // 创建错误提示
+      const errorDiv = document.createElement('div')
+      errorDiv.style.cssText = `
+        padding: 20px;
+        background: #ff4444;
+        color: white;
+        border-radius: 8px;
+        text-align: center;
+        font-family: Arial, sans-serif;
+      `
+      errorDiv.innerHTML = `
+        <h3>渲染引擎初始化失败</h3>
+        <p>请尝试刷新页面或使用其他浏览器</p>
+        <p>错误信息: ${fallbackError.message}</p>
+      `
+      container.appendChild(errorDiv)
+      return
+    }
   }
 
-  // 创建主容器
-  mainContainer = new PIXI.Container()
-  app.stage.addChild(mainContainer)
+  // 确保app正确初始化
+  if (!app || !app.stage) {
+    console.error('❌ PixiJS应用未正确初始化')
+    return
+  }
 
-  // 创建时间线容器
-  timelineContainer = new PIXI.Container()
-  timelineContainer.y = 0
-  mainContainer.addChild(timelineContainer)
+  try {
+    // 创建主容器
+    mainContainer = new PIXI.Container()
+    app.stage.addChild(mainContainer)
 
-  // 创建轨道容器
-  tracksContainer = new PIXI.Container()
-  tracksContainer.y = timelineHeight
-  mainContainer.addChild(tracksContainer)
+    // 创建时间线容器
+    timelineContainer = new PIXI.Container()
+    timelineContainer.y = 0
+    mainContainer.addChild(timelineContainer)
 
-  // 创建播放头
-  playheadLine = new PIXI.Graphics()
-  playheadLine.lineStyle(2, 0xff4444)
-  playheadLine.moveTo(0, 0)
-  playheadLine.lineTo(0, container.clientHeight)
-  mainContainer.addChild(playheadLine)
+    // 创建轨道容器
+    tracksContainer = new PIXI.Container()
+    tracksContainer.y = timelineHeight
+    mainContainer.addChild(tracksContainer)
 
-  // 初始化轨道数据
-  initializeTracks()
-  
-  // 创建时间线
-  createTimeline()
-  
-  // 创建轨道
-  createTracks()
-  
-  // 开始渲染循环
-  startRenderLoop()
+    // 创建播放头
+    playheadLine = new PIXI.Graphics()
+    playheadLine.lineStyle(2, 0xff4444)
+    playheadLine.moveTo(0, 0)
+    playheadLine.lineTo(0, height)
+    mainContainer.addChild(playheadLine)
+
+    // 初始化轨道数据
+    initializeTracks()
+    
+    // 创建时间线
+    createTimeline()
+    
+    // 创建轨道
+    createTracks()
+    
+    // 开始渲染循环
+    startRenderLoop()
+    
+    console.log('✅ PixiJS场景初始化完成')
+  } catch (sceneError) {
+    console.error('❌ 场景初始化失败:', sceneError)
+  }
 }
 
 // 初始化轨道数据
@@ -844,10 +890,26 @@ function formatTime(seconds) {
 
 // 窗口大小调整
 function handleResize() {
-  if (app && pixiContainer.value) {
-    app.renderer.resize(pixiContainer.value.clientWidth, pixiContainer.value.clientHeight)
-    createTimeline()
-    createTracks()
+  if (app && app.renderer && pixiContainer.value) {
+    try {
+      const newWidth = pixiContainer.value.clientWidth || 800
+      const newHeight = pixiContainer.value.clientHeight || 600
+      
+      // 安全地调整渲染器大小
+      app.renderer.resize(newWidth, newHeight)
+      
+      // 更新视口边界
+      updateViewportBounds()
+      
+      // 重新渲染内容
+      createTimeline()
+      createTracks()
+      updatePlayhead()
+      
+      console.log(`📐 窗口大小调整: ${newWidth}x${newHeight}`)
+    } catch (error) {
+      console.warn('⚠️ 窗口大小调整失败:', error)
+    }
   }
 }
 
