@@ -1,5 +1,5 @@
 <template>
-  <div class="pixi-track-editor">
+  <div class="simple-track-editor">
     <!-- 控制面板 -->
     <div class="controls-panel">
       <div class="panel-left">
@@ -101,6 +101,7 @@
             <div class="time-marker" v-for="t in 10" :key="t" :style="{ left: (t * 80) + 'px' }">
               {{ t }}s
             </div>
+            <div class="playhead" :style="{ left: (currentTime * 80) + 'px' }"></div>
           </div>
         </div>
         
@@ -125,8 +126,10 @@
                 width: (clip.duration * 10) + 'px',
                 backgroundColor: clip.color
               }"
+              @click="selectClip(clip)"
             >
               <div class="clip-name">{{ clip.name }}</div>
+              <div class="clip-duration">{{ clip.duration }}s</div>
             </div>
           </div>
         </div>
@@ -143,11 +146,7 @@ const isPlaying = ref(false)
 const currentTime = ref(0)
 const zoomX = ref(1)
 const zoomY = ref(1)
-
-// 确保没有任何PixiJS相关的初始化代码
-onMounted(() => {
-  console.log('✅ 轨道编辑器组件已成功加载')
-})
+const selectedClip = ref(null)
 
 // 轨道数据
 const tracks = ref([
@@ -190,15 +189,40 @@ const tracks = ref([
   }
 ])
 
+// 播放模拟
+let playInterval = null
+
 // 事件处理
 function togglePlayback() {
   isPlaying.value = !isPlaying.value
+  
+  if (isPlaying.value) {
+    playInterval = setInterval(() => {
+      currentTime.value += 0.1
+      if (currentTime.value >= 60) {
+        currentTime.value = 0
+      }
+    }, 100)
+  } else {
+    if (playInterval) {
+      clearInterval(playInterval)
+      playInterval = null
+    }
+  }
 }
 
 function toggleSolo(trackId) {
   const track = tracks.value.find(t => t.id === trackId)
   if (track) {
     track.isSolo = !track.isSolo
+    // 当某个轨道开启Solo时，其他轨道自动Mute
+    if (track.isSolo) {
+      tracks.value.forEach(t => {
+        if (t.id !== trackId) t.isMuted = true
+      })
+    } else {
+      tracks.value.forEach(t => t.isMuted = false)
+    }
   }
 }
 
@@ -209,15 +233,33 @@ function toggleMute(trackId) {
   }
 }
 
+function selectClip(clip) {
+  selectedClip.value = clip
+  console.log('选中片段:', clip.name)
+}
+
 function formatTime(seconds) {
   const mins = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
+
+// 组件初始化
+onMounted(() => {
+  console.log('✅ 简单轨道编辑器加载成功')
+})
+
+// 组件卸载时清理定时器
+import { onUnmounted } from 'vue'
+onUnmounted(() => {
+  if (playInterval) {
+    clearInterval(playInterval)
+  }
+})
 </script>
 
 <style scoped>
-.pixi-track-editor {
+.simple-track-editor {
   width: 100%;
   height: 600px;
   background: #0a0a0a;
@@ -337,6 +379,16 @@ function formatTime(seconds) {
   font-family: 'Courier New', monospace;
 }
 
+.playhead {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: #ff4444;
+  z-index: 10;
+  transition: left 0.1s ease;
+}
+
 .tracks-container {
   flex: 1;
   position: relative;
@@ -423,14 +475,17 @@ function formatTime(seconds) {
   border: 1px solid rgba(255, 255, 255, 0.2);
   cursor: pointer;
   display: flex;
+  flex-direction: column;
+  justify-content: center;
   align-items: center;
   padding: 8px;
   box-sizing: border-box;
-  transition: opacity 0.2s;
+  transition: all 0.2s;
 }
 
 .audio-clip:hover {
   opacity: 0.8;
+  transform: translateY(-2px);
 }
 
 .clip-name {
@@ -438,5 +493,11 @@ function formatTime(seconds) {
   font-size: 12px;
   font-weight: bold;
   text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+  margin-bottom: 4px;
+}
+
+.clip-duration {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 10px;
 }
 </style>

@@ -55,7 +55,7 @@
 
     <!-- 多轨道波形显示 -->
 <div class="waveform-section">
-<PixiTrackEditor />
+<SimpleTrackEditor />
 </div>
   </div>
 </template>
@@ -64,7 +64,7 @@
 import { ref } from 'vue'
 import AudioClipItem from './components/AudioClipItem.vue'
 import TimelineControls from './components/TimelineControls.vue'
-import PixiTrackEditor from './components/PixiTrackEditor.vue'
+import SimpleTrackEditor from './components/SimpleTrackEditor.vue'
 
 const activeTab = ref('sound')
 const searchValue = ref('')
