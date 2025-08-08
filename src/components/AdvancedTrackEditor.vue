@@ -161,7 +161,7 @@ let timelineCtx = null
 let clipGraphicsCache = new Map() // 缓存clip图形对象
 let dragPreviewGraphics = null    // 拖拽预览图形
 let lastRenderTime = 0           // 最后渲染时间
-const RENDER_THROTTLE = 16       // 渲染节流 (60fps)
+const RENDER_THROTTLE = 200      // 渲染节流 (5fps) - 大幅降低更新频率
 
 // 鼠标和拖拽状态
 const mouse = reactive({
@@ -182,6 +182,7 @@ const clipDrag = reactive({
   startTime: 0,
   offsetX: 0,
   lastUpdateTime: 0,          // 最后更新时间
+  lastPreviewUpdate: 0,       // 最后预览更新时间
   pendingUpdate: false,       // 是否有待处理的更新
   snapTime: 0,                // 停靠时间
   snapToClip: null           // 停靠到的clip
@@ -534,44 +535,37 @@ function createTracks() {
   tracksContainer.y = 0
 }
 
-// 高性能轨道重绘（仅更新位置）- 优化版本
+// 延迟更新策略，减少卡顿
+let dragUpdateTimeout = null
+
 function updateClipPositions() {
-  // 只更新正在拖拽的clip，避免全量重绘
-  if (clipDrag.isDragging && clipDrag.draggedClip) {
-    const draggedClipContainer = clipGraphicsCache.get(clipDrag.draggedClip.id)
-    if (draggedClipContainer) {
-      updateSingleClipPosition(clipDrag.draggedClip, draggedClipContainer)
-    }
+  // 清除之前的延迟更新
+  if (dragUpdateTimeout) {
+    clearTimeout(dragUpdateTimeout)
   }
+  
+  // 使用较长的延迟，减少更新频率
+  dragUpdateTimeout = setTimeout(() => {
+    if (clipDrag.isDragging && clipDrag.draggedClip) {
+      const draggedClipContainer = clipGraphicsCache.get(clipDrag.draggedClip.id)
+      if (draggedClipContainer) {
+        updateSingleClipPosition(clipDrag.draggedClip, draggedClipContainer)
+      }
+    }
+  }, 100) // 100ms延迟，降低更新频率
 }
 
-// 更新单个clip位置（高性能版本）
+// 简化的clip位置更新（确保波形跟随）
 function updateSingleClipPosition(clip, clipContainer) {
-  const newClipX = clip.startTime * pixelsPerSecond * zoomX.value
+  // 直接重新创建clip内容，确保波形跟随
+  const trackIndex = tracks.value.findIndex(track => 
+    track.clips.some(c => c.id === clip.id)
+  )
   
-  // 快速更新位置而不重新创建所有对象
-  clipContainer.children.forEach((child, index) => {
-    if (index === 0 && child.clear) {
-      // clip背景
-      const color = parseInt(clip.color.replace('#', ''), 16)
-      const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
-      const clipHeight = trackHeight * zoomY.value - 20
-      
-      child.clear()
-      child.beginFill(color, 0.8)
-      child.lineStyle(2, color, 1)
-      child.drawRoundedRect(newClipX, 10, clipWidth, clipHeight, 6)
-      child.endFill()
-    } else if (index === 1 && child.clear) {
-      // 波形
-      const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
-      const clipHeight = trackHeight * zoomY.value - 20
-      redrawWaveform(child, clip, newClipX, clipWidth, clipHeight)
-    } else if (child.text !== undefined) {
-      // 文字
-      child.x = newClipX + 8
-    }
-  })
+  if (trackIndex !== -1) {
+    const track = tracks.value[trackIndex]
+    recreateClip(clip, track, trackIndex, clipContainer)
+  }
 }
 
 // 重新创建单个clip（保持容器，重绘内容）
@@ -866,40 +860,41 @@ function detectTargetTrack(mouseY) {
   return trackIndex >= 0 && trackIndex < tracks.value.length ? trackIndex : null
 }
 
-// 更新拖拽位置（增强版本）
+// 简化的拖拽位置更新，减少卡顿
 function updateDragPosition(event) {
   const deltaX = event.clientX - clipDrag.startX
-  const deltaY = event.clientY - clipDrag.startY
   
   // 计算新时间位置
   const newTime = clipDrag.startTime + (deltaX / (pixelsPerSecond * zoomX.value))
   
-  // 检测目标轨道
+  // 检测目标轨道（降低检测频率）
   const targetTrackIndex = detectTargetTrack(event.clientY)
   clipDrag.targetTrack = targetTrackIndex !== null ? tracks.value[targetTrackIndex] : null
   
-  // 查找停靠点
-  const { snapTime, snapToClip } = findSnapPoint(newTime, targetTrackIndex)
-  clipDrag.snapTime = snapTime
-  clipDrag.snapToClip = snapToClip
+  // 简化的网格对齐，不使用复杂的停靠逻辑
+  const finalTime = Math.max(0, Math.round(newTime * 4) / 4)
   
-  // 1/4秒网格对齐（如果没有停靠）
-  const finalTime = snapToClip ? snapTime : Math.max(0, Math.round(newTime * 4) / 4)
-  
-  if (clipDrag.draggedClip && Math.abs(clipDrag.draggedClip.startTime - finalTime) > 0.01) {
+  if (clipDrag.draggedClip && Math.abs(clipDrag.draggedClip.startTime - finalTime) > 0.1) {
     clipDrag.draggedClip.startTime = finalTime
     
-    // 使用快速位置更新
-    throttledUpdateClipPositions()
+    // 只更新预览，不实时更新clip渲染
+    updateDragPreview(finalTime, targetTrackIndex, null)
     
-    // 更新拖拽预览位置
-    updateDragPreview(finalTime, targetTrackIndex, snapToClip)
+    // 降低clip位置更新频率
+    throttledUpdateClipPositions()
   }
 }
 
-// 更新拖拽预览
+// 简化的拖拽预览，减少渲染负担
 function updateDragPreview(time, targetTrackIndex, snapToClip) {
   if (!dragPreviewGraphics) return
+  
+  // 限制预览更新频率
+  const now = Date.now()
+  if (clipDrag.lastPreviewUpdate && now - clipDrag.lastPreviewUpdate < 50) {
+    return // 50ms内不重复更新预览
+  }
+  clipDrag.lastPreviewUpdate = now
   
   dragPreviewGraphics.clear()
   
@@ -920,17 +915,15 @@ function updateDragPreview(time, targetTrackIndex, snapToClip) {
     previewY = originalTrackIndex * trackHeight * zoomY.value + 10
   }
   
-  // 绘制预览框
-  dragPreviewGraphics.lineStyle(2, color, snapToClip ? 1.0 : 0.8)
-  dragPreviewGraphics.beginFill(color, snapToClip ? 0.4 : 0.2)
+  // 简化的预览框（只绘制边框，减少填充）
+  dragPreviewGraphics.lineStyle(3, color, snapToClip ? 1.0 : 0.6)
   dragPreviewGraphics.drawRoundedRect(newX, previewY, clipWidth, clipHeight, 6)
-  dragPreviewGraphics.endFill()
   
-  // 如果有停靠，绘制停靠指示器
+  // 简化的停靠指示器
   if (snapToClip) {
-    dragPreviewGraphics.lineStyle(3, 0x00ff00, 1.0)
-    dragPreviewGraphics.moveTo(newX, previewY - 5)
-    dragPreviewGraphics.lineTo(newX, previewY + clipHeight + 5)
+    dragPreviewGraphics.lineStyle(4, 0x00ff00, 1.0)
+    dragPreviewGraphics.moveTo(newX - 2, previewY)
+    dragPreviewGraphics.lineTo(newX - 2, previewY + clipHeight)
   }
 }
 
