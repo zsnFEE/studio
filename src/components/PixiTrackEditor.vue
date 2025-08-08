@@ -156,6 +156,12 @@ let tracksContainer = null
 let timelineContainer = null
 let playheadLine = null
 
+// 性能优化相关
+let viewportBounds = { left: 0, right: 0, top: 0, bottom: 0 }
+let renderCache = new Map()
+let lastViewport = { x: 0, y: 0, zoomX: 1, zoomY: 1 }
+let needsRedraw = true
+
 // 轨道数据
 const tracks = ref([
   {
@@ -288,21 +294,70 @@ function generateWaveformData(track) {
   return waveform
 }
 
+// 检测OffscreenCanvas支持
+function supportsOffscreenCanvas() {
+  return typeof OffscreenCanvas !== 'undefined' && 
+         typeof OffscreenCanvas.prototype.getContext !== 'undefined'
+}
+
 // 初始化 PixiJS
 async function initPixi() {
   const container = pixiContainer.value
   if (!container) return
 
-  app = new PIXI.Application({
+  // 尝试使用OffscreenCanvas
+  const pixiOptions = {
     width: container.clientWidth,
     height: container.clientHeight,
     backgroundColor: 0x1a1a1a,
     antialias: true,
     resolution: window.devicePixelRatio || 1,
-    autoDensity: true
-  })
+    autoDensity: true,
+    powerPreference: 'high-performance'
+  }
 
-  container.appendChild(app.view)
+  // 如果支持OffscreenCanvas，尝试使用
+  if (supportsOffscreenCanvas()) {
+    try {
+      console.log('🚀 使用OffscreenCanvas进行硬件加速渲染')
+      
+      // 创建OffscreenCanvas
+      const offscreenCanvas = new OffscreenCanvas(
+        container.clientWidth, 
+        container.clientHeight
+      )
+      
+      pixiOptions.view = offscreenCanvas
+      app = new PIXI.Application(pixiOptions)
+      
+      // 将OffscreenCanvas内容转移到主canvas
+      const mainCanvas = document.createElement('canvas')
+      mainCanvas.width = container.clientWidth
+      mainCanvas.height = container.clientHeight
+      mainCanvas.style.width = '100%'
+      mainCanvas.style.height = '100%'
+      container.appendChild(mainCanvas)
+      
+      // 设置转移渲染
+      const mainCtx = mainCanvas.getContext('2d')
+      app.ticker.add(() => {
+        if (needsRedraw) {
+          const bitmap = offscreenCanvas.transferToImageBitmap()
+          mainCtx.clearRect(0, 0, mainCanvas.width, mainCanvas.height)
+          mainCtx.drawImage(bitmap, 0, 0)
+        }
+      })
+      
+    } catch (error) {
+      console.warn('OffscreenCanvas初始化失败，降级到标准Canvas:', error)
+      app = new PIXI.Application(pixiOptions)
+      container.appendChild(app.view)
+    }
+  } else {
+    console.log('📱 使用标准Canvas渲染 (OffscreenCanvas不支持)')
+    app = new PIXI.Application(pixiOptions)
+    container.appendChild(app.view)
+  }
 
   // 创建主容器
   mainContainer = new PIXI.Container()
@@ -347,20 +402,58 @@ function initializeTracks() {
   })
 }
 
-// 创建时间线
+// 更新视口边界
+function updateViewportBounds() {
+  const containerWidth = pixiContainer.value?.clientWidth || 800
+  const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
+  
+  // 计算可视时间范围（增加缓冲区）
+  const bufferTime = 2 / zoomX.value // 2秒缓冲
+  const startTime = Math.max(0, viewportStartTime.value - bufferTime)
+  const endTime = Math.min(maxDuration, viewportEndTime.value + bufferTime)
+  
+  // 计算可视轨道范围
+  const startTrack = Math.max(0, Math.floor(scrollY.value / (trackHeight * zoomY.value)))
+  const endTrack = Math.min(tracks.value.length - 1, 
+    Math.ceil((scrollY.value + containerHeight) / (trackHeight * zoomY.value)))
+  
+  viewportBounds = {
+    left: startTime * pixelsPerSecond * zoomX.value,
+    right: endTime * pixelsPerSecond * zoomX.value,
+    top: startTrack,
+    bottom: endTrack,
+    startTime,
+    endTime,
+    startTrack,
+    endTrack
+  }
+}
+
+// 创建优化的时间线
 function createTimeline() {
   timelineContainer.removeChildren()
+  updateViewportBounds()
   
+  // 只渲染可视范围的时间线背景
   const timelineBackground = new PIXI.Graphics()
   timelineBackground.beginFill(0x2a2a2a)
-  timelineBackground.drawRect(0, 0, maxDuration * pixelsPerSecond * zoomX.value, timelineHeight)
+  timelineBackground.drawRect(
+    viewportBounds.left, 0, 
+    viewportBounds.right - viewportBounds.left, timelineHeight
+  )
   timelineBackground.endFill()
   timelineContainer.addChild(timelineBackground)
   
-  // 时间刻度
-  const timeStep = Math.max(1, Math.floor(10 / zoomX.value)) // 动态调整时间间隔
-  for (let t = 0; t <= maxDuration; t += timeStep) {
+  // 时间刻度 - 只渲染可视范围
+  const timeStep = Math.max(1, Math.floor(10 / zoomX.value))
+  const startTick = Math.floor(viewportBounds.startTime / timeStep) * timeStep
+  const endTick = Math.ceil(viewportBounds.endTime / timeStep) * timeStep
+  
+  for (let t = startTick; t <= endTick; t += timeStep) {
     const x = t * pixelsPerSecond * zoomX.value
+    
+    // 跳过不在可视范围内的刻度
+    if (x < viewportBounds.left || x > viewportBounds.right) continue
     
     // 主要刻度线
     const majorTick = new PIXI.Graphics()
@@ -369,20 +462,22 @@ function createTimeline() {
     majorTick.lineTo(x, timelineHeight)
     timelineContainer.addChild(majorTick)
     
-    // 时间标签
-    const timeText = new PIXI.Text(formatTime(t), {
-      fontSize: 12,
-      fill: 0xffffff
-    })
-    timeText.x = x + 2
-    timeText.y = timelineHeight - 35
-    timelineContainer.addChild(timeText)
+    // 时间标签 - 减少密度以提高性能
+    if (t % Math.max(timeStep, 5) === 0) {
+      const timeText = new PIXI.Text(formatTime(t), {
+        fontSize: 12,
+        fill: 0xffffff
+      })
+      timeText.x = x + 2
+      timeText.y = timelineHeight - 35
+      timelineContainer.addChild(timeText)
+    }
     
-    // 次要刻度线
-    if (zoomX.value > 0.5) {
+    // 次要刻度线 - 只在高缩放时显示
+    if (zoomX.value > 1) {
       for (let subT = 0.2; subT < timeStep && subT < 1; subT += 0.2) {
         const subX = (t + subT) * pixelsPerSecond * zoomX.value
-        if (subX < maxDuration * pixelsPerSecond * zoomX.value) {
+        if (subX >= viewportBounds.left && subX <= viewportBounds.right) {
           const minorTick = new PIXI.Graphics()
           minorTick.lineStyle(1, 0x444444)
           minorTick.moveTo(subX, timelineHeight - 10)
@@ -394,39 +489,125 @@ function createTimeline() {
   }
 }
 
-// 创建轨道
+// 优化的轨道创建 - 只渲染可视区域
 function createTracks() {
   tracksContainer.removeChildren()
+  updateViewportBounds()
   
-  tracks.value.forEach((track, index) => {
+  // 只渲染可视范围内的轨道
+  for (let index = viewportBounds.startTrack; index <= viewportBounds.endTrack; index++) {
+    if (index >= tracks.value.length) break
+    
+    const track = tracks.value[index]
     const trackContainer = new PIXI.Container()
     trackContainer.y = index * trackHeight * zoomY.value
     
-    // 轨道背景
+    // 轨道背景 - 只渲染可视宽度
     const trackBg = new PIXI.Graphics()
     trackBg.beginFill(index % 2 ? 0x1e1e1e : 0x252525)
-    trackBg.drawRect(0, 0, maxDuration * pixelsPerSecond * zoomX.value, trackHeight * zoomY.value)
+    trackBg.drawRect(
+      viewportBounds.left, 0, 
+      viewportBounds.right - viewportBounds.left, 
+      trackHeight * zoomY.value
+    )
     trackBg.endFill()
     trackContainer.addChild(trackBg)
     
-    // 轨道分割线
+    // 轨道分割线 - 只渲染可视宽度
     const separator = new PIXI.Graphics()
     separator.lineStyle(1, 0x333333)
-    separator.moveTo(0, trackHeight * zoomY.value)
-    separator.lineTo(maxDuration * pixelsPerSecond * zoomX.value, trackHeight * zoomY.value)
+    separator.moveTo(viewportBounds.left, trackHeight * zoomY.value)
+    separator.lineTo(viewportBounds.right, trackHeight * zoomY.value)
     trackContainer.addChild(separator)
     
-    // 创建波形
+    // 创建波形 - 使用缓存和可视区域优化
     if (track.waveformData.length > 0) {
-      const waveform = createWaveform(track)
-      trackContainer.addChild(waveform)
+      const waveform = createOptimizedWaveform(track, index)
+      if (waveform) {
+        trackContainer.addChild(waveform)
+      }
     }
     
     tracksContainer.addChild(trackContainer)
-  })
+  }
 }
 
-// 创建波形图形
+// 优化的波形创建 - 支持缓存和可视区域渲染
+function createOptimizedWaveform(track, trackIndex) {
+  const cacheKey = `${track.id}-${zoomX.value.toFixed(2)}-${zoomY.value.toFixed(2)}-${viewportBounds.startTime.toFixed(2)}-${viewportBounds.endTime.toFixed(2)}`
+  
+  // 检查缓存
+  if (renderCache.has(cacheKey)) {
+    const cached = renderCache.get(cacheKey)
+    cached.alpha = track.isMuted ? 0.3 : 0.8
+    return cached
+  }
+  
+  const waveformContainer = new PIXI.Container()
+  const waveformData = track.waveformData
+  
+  if (waveformData.length === 0) return null
+  
+  const totalDuration = track.duration
+  const pointsPerSecond = waveformData.length / totalDuration
+  
+  // 计算可视范围内的数据点
+  const startDataIndex = Math.max(0, Math.floor(viewportBounds.startTime * pointsPerSecond))
+  const endDataIndex = Math.min(waveformData.length - 1, Math.ceil(viewportBounds.endTime * pointsPerSecond))
+  
+  const color = PIXI.utils.hex2rgb(track.color)
+  const alpha = track.isMuted ? 0.3 : 0.8
+  
+  // 创建优化的波形路径
+  const waveform = new PIXI.Graphics()
+  waveform.alpha = alpha
+  
+  // 动态采样率 - 根据缩放级别调整
+  const sampleRate = Math.max(1, Math.floor(1 / zoomX.value))
+  const baselineY = trackHeight * zoomY.value / 2
+  const amplitudeScale = trackHeight * zoomY.value / 4
+  
+  waveform.beginFill(color, 0.8)
+  waveform.moveTo(viewportBounds.left, baselineY)
+  
+  // 上半部分路径
+  for (let i = startDataIndex; i <= endDataIndex; i += sampleRate) {
+    if (i >= waveformData.length) break
+    
+    const time = i / pointsPerSecond
+    const x = time * pixelsPerSecond * zoomX.value
+    const amplitude = waveformData[i] * amplitudeScale
+    
+    waveform.lineTo(x, baselineY - amplitude)
+  }
+  
+  // 下半部分路径（镜像）
+  for (let i = endDataIndex; i >= startDataIndex; i -= sampleRate) {
+    if (i < 0) break
+    
+    const time = i / pointsPerSecond
+    const x = time * pixelsPerSecond * zoomX.value
+    const amplitude = waveformData[i] * amplitudeScale
+    
+    waveform.lineTo(x, baselineY + amplitude)
+  }
+  
+  waveform.closePath()
+  waveform.endFill()
+  
+  waveformContainer.addChild(waveform)
+  
+  // 缓存结果（限制缓存大小）
+  if (renderCache.size > 50) {
+    const firstKey = renderCache.keys().next().value
+    renderCache.delete(firstKey)
+  }
+  renderCache.set(cacheKey, waveformContainer)
+  
+  return waveformContainer
+}
+
+// 原始波形创建函数（备用）
 function createWaveform(track) {
   const waveformContainer = new PIXI.Container()
   const waveformData = track.waveformData
@@ -463,11 +644,29 @@ function createWaveform(track) {
   return waveformContainer
 }
 
-// 更新缩放
+// 优化的缩放更新
 function updateZoom() {
-  createTimeline()
-  createTracks()
-  updatePlayhead()
+  // 检查是否真的需要重新渲染
+  const threshold = 0.01
+  if (Math.abs(lastViewport.zoomX - zoomX.value) < threshold && 
+      Math.abs(lastViewport.zoomY - zoomY.value) < threshold) {
+    return
+  }
+  
+  // 清理缓存
+  renderCache.clear()
+  
+  // 延迟渲染以避免频繁更新
+  clearTimeout(updateZoom.timeoutId)
+  updateZoom.timeoutId = setTimeout(() => {
+    createTimeline()
+    createTracks()
+    updatePlayhead()
+    
+    lastViewport.zoomX = zoomX.value
+    lastViewport.zoomY = zoomY.value
+    needsRedraw = true
+  }, 16) // 约60fps
 }
 
 // 更新播放头位置
@@ -477,35 +676,74 @@ function updatePlayhead() {
   }
 }
 
-// 更新视口
+// 优化的视口更新
 function updateViewport() {
+  // 检查滚动变化
+  const threshold = 5 // 像素
+  if (Math.abs(lastViewport.x - scrollX.value) < threshold && 
+      Math.abs(lastViewport.y - scrollY.value) < threshold) {
+    return
+  }
+  
   if (mainContainer) {
     mainContainer.x = -scrollX.value
     mainContainer.y = -scrollY.value
   }
+  
+  // 延迟重新渲染可视区域
+  clearTimeout(updateViewport.timeoutId)
+  updateViewport.timeoutId = setTimeout(() => {
+    // 只有滚动距离足够大时才重新渲染轨道
+    if (Math.abs(lastViewport.x - scrollX.value) > 100 || 
+        Math.abs(lastViewport.y - scrollY.value) > trackHeight * zoomY.value) {
+      createTracks()
+      createTimeline()
+    }
+    
+    lastViewport.x = scrollX.value
+    lastViewport.y = scrollY.value
+    needsRedraw = true
+  }, 33) // 约30fps，减少渲染频率
+  
   updatePlayhead()
 }
 
-// 渲染循环
+// 优化的渲染循环
 function startRenderLoop() {
-  function animate() {
-    if (isPlaying.value) {
-      currentTime.value += 0.016 // 约60fps
-      
-      // 自动滚动跟随播放头
-      const playheadX = currentTime.value * pixelsPerSecond * zoomX.value
-      const containerWidth = pixiContainer.value?.clientWidth || 800
-      
-      if (playheadX - scrollX.value > containerWidth * 0.8) {
-        scrollX.value = playheadX - containerWidth * 0.2
+  let lastTime = 0
+  
+  function animate(currentTimeStamp) {
+    const deltaTime = currentTimeStamp - lastTime
+    
+    // 限制帧率以提升性能
+    if (deltaTime >= 16.67) { // 约60fps
+      if (isPlaying.value) {
+        currentTime.value += deltaTime / 1000 // 转换为秒
+        
+        // 自动滚动跟随播放头
+        const playheadX = currentTime.value * pixelsPerSecond * zoomX.value
+        const containerWidth = pixiContainer.value?.clientWidth || 800
+        
+        if (playheadX - scrollX.value > containerWidth * 0.8) {
+          scrollX.value = playheadX - containerWidth * 0.2
+          updateViewport()
+        }
+        
+        updatePlayhead()
+        needsRedraw = true
       }
       
-      updatePlayhead()
+      // 重置重绘标志
+      if (needsRedraw) {
+        needsRedraw = false
+      }
+      
+      lastTime = currentTimeStamp
     }
     
     requestAnimationFrame(animate)
   }
-  animate()
+  animate(0)
 }
 
 // 事件处理
