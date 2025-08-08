@@ -85,41 +85,59 @@
     <!-- 轨道信息侧边栏 -->
     <div class="track-sidebar">
       <div 
-        v-for="(track, index) in tracks" 
+        v-for="(track, index) in sortedTracks" 
         :key="track.id"
         class="track-info"
-        :style="{ top: (index * trackHeight * zoomY) + 'px' }"
+        :class="{ 'track-dragging': trackDrag.draggedTrackId === track.id }"
+        :style="{ 
+          top: (index * trackHeight * zoomY) + 'px',
+          height: (trackHeight * zoomY) + 'px'
+        }"
+        @mousedown="handleTrackMouseDown($event, track, index)"
+        draggable="false"
       >
-        <div class="track-header">
-          <h4 :style="{ color: track.color }">{{ track.name }}</h4>
-          <span class="track-type">{{ track.type }}</span>
+        <!-- 拖拽手柄 -->
+        <div class="drag-handle">
+          <div class="drag-dots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+          </div>
         </div>
         
-        <div class="track-controls">
-          <t-button 
-            size="small" 
-            :theme="track.isSolo ? 'warning' : 'default'"
-            @click="toggleSolo(track.id)"
-          >
-            S
-          </t-button>
-          <t-button 
-            size="small" 
-            :theme="track.isMuted ? 'danger' : 'default'"
-            @click="toggleMute(track.id)"
-          >
-            M
-          </t-button>
-        </div>
-        
-        <div class="volume-control">
-          <t-slider 
-            v-model="track.volume" 
-            :min="0" 
-            :max="100"
-            size="small"
-            vertical
-          />
+        <div class="track-content">
+          <div class="track-header">
+            <h4 :style="{ color: track.color }">{{ track.name }}</h4>
+            <span class="track-type">{{ track.type }}</span>
+          </div>
+          
+          <div class="track-controls">
+            <t-button 
+              size="small" 
+              :theme="track.isSolo ? 'warning' : 'default'"
+              @click="toggleSolo(track.id)"
+            >
+              S
+            </t-button>
+            <t-button 
+              size="small" 
+              :theme="track.isMuted ? 'danger' : 'default'"
+              @click="toggleMute(track.id)"
+            >
+              M
+            </t-button>
+          </div>
+          
+          <div class="volume-control">
+            <t-slider 
+              v-model="track.volume" 
+              :min="0" 
+              :max="100"
+              size="small"
+              vertical
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -176,70 +194,170 @@ let renderCache = new Map()
 let lastViewport = { x: 0, y: 0, zoomX: 1, zoomY: 1 }
 let needsRedraw = true
 
-// 轨道数据
+// 轨道数据结构
 const tracks = ref([
   {
     id: 1,
     name: '华丽主旋律',
     type: 'LEAD',
     color: '#10b981',
-    duration: 45,
     volume: 85,
-    waveformData: [],
     isSolo: false,
-    isMuted: false
+    isMuted: false,
+    order: 0,
+    clips: [
+      {
+        id: 'clip_1_1',
+        name: '主旋律_1',
+        startTime: 0,
+        duration: 15,
+        color: '#10b981',
+        waveformData: []
+      },
+      {
+        id: 'clip_1_2', 
+        name: '主旋律_2',
+        startTime: 20,
+        duration: 12,
+        color: '#059669',
+        waveformData: []
+      }
+    ]
   },
   {
     id: 2,
     name: '节奏鼓点',
     type: 'PERC',
     color: '#f59e0b',
-    duration: 30,
     volume: 95,
-    waveformData: [],
     isSolo: false,
-    isMuted: false
+    isMuted: false,
+    order: 1,
+    clips: [
+      {
+        id: 'clip_2_1',
+        name: '鼓点_1',
+        startTime: 0,
+        duration: 8,
+        color: '#f59e0b',
+        waveformData: []
+      },
+      {
+        id: 'clip_2_2',
+        name: '鼓点_2', 
+        startTime: 12,
+        duration: 10,
+        color: '#d97706',
+        waveformData: []
+      },
+      {
+        id: 'clip_2_3',
+        name: '鼓点_3',
+        startTime: 25,
+        duration: 8,
+        color: '#f59e0b',
+        waveformData: []
+      }
+    ]
   },
   {
     id: 3,
     name: '管乐和弦',
     type: 'WIND',
     color: '#8b5cf6',
-    duration: 35,
     volume: 90,
-    waveformData: [],
     isSolo: false,
-    isMuted: false
+    isMuted: false,
+    order: 2,
+    clips: [
+      {
+        id: 'clip_3_1',
+        name: '和弦_1',
+        startTime: 5,
+        duration: 18,
+        color: '#8b5cf6',
+        waveformData: []
+      }
+    ]
   },
   {
     id: 4,
     name: '深邃贝斯',
     type: 'BASS',
     color: '#3b82f6',
-    duration: 40,
     volume: 70,
-    waveformData: [],
     isSolo: false,
-    isMuted: false
+    isMuted: false,
+    order: 3,
+    clips: [
+      {
+        id: 'clip_4_1',
+        name: '贝斯_1',
+        startTime: 0,
+        duration: 25,
+        color: '#3b82f6',
+        waveformData: []
+      }
+    ]
   },
   {
     id: 5,
     name: '天籁和声',
     type: 'PAD',
     color: '#ef4444',
-    duration: 50,
     volume: 55,
-    waveformData: [],
     isSolo: false,
-    isMuted: false
+    isMuted: false,
+    order: 4,
+    clips: [
+      {
+        id: 'clip_5_1',
+        name: '和声_1',
+        startTime: 10,
+        duration: 20,
+        color: '#ef4444',
+        waveformData: []
+      },
+      {
+        id: 'clip_5_2',
+        name: '和声_2',
+        startTime: 35,
+        duration: 15,
+        color: '#dc2626',
+        waveformData: []
+      }
+    ]
   }
 ])
+
+// 片段拖拽状态
+const clipDrag = reactive({
+  isDragging: false,
+  draggedClip: null,
+  draggedTrackId: null,
+  startX: 0,
+  startTime: 0,
+  offsetX: 0
+})
+
+// 轨道拖拽状态
+const trackDrag = reactive({
+  isDragging: false,
+  draggedTrackId: null,
+  startY: 0,
+  startOrder: 0
+})
 
 // 计算属性
 const viewportStartTime = computed(() => scrollX.value / (pixelsPerSecond * zoomX.value))
 const viewportEndTime = computed(() => {
   const containerWidth = pixiContainer.value?.clientWidth || 800
   return viewportStartTime.value + (containerWidth / (pixelsPerSecond * zoomX.value))
+})
+
+// 按order排序的轨道
+const sortedTracks = computed(() => {
+  return [...tracks.value].sort((a, b) => a.order - b.order)
 })
 
 const horizontalThumbStyle = computed(() => {
@@ -266,25 +384,25 @@ const verticalThumbStyle = computed(() => {
   }
 })
 
-// 生成波形数据
-function generateWaveformData(track) {
+// 为clip生成波形数据
+function generateClipWaveformData(clip, trackType) {
   const pointsPerSecond = 50
-  const totalPoints = track.duration * pointsPerSecond
+  const totalPoints = clip.duration * pointsPerSecond
   const waveform = []
   
   for (let i = 0; i < totalPoints; i++) {
     const time = i / pointsPerSecond
     let amplitude = 0
     
-    switch(track.type) {
+    switch(trackType) {
       case 'LEAD':
-        amplitude = Math.sin(time * 4) * 0.8 + Math.sin(time * 8) * 0.3
+        amplitude = Math.sin(time * 4 + clip.startTime) * 0.8 + Math.sin(time * 8 + clip.startTime) * 0.3
         break
       case 'BASS':
-        amplitude = Math.sign(Math.sin(time * 2)) * 0.9
+        amplitude = Math.sign(Math.sin(time * 2 + clip.startTime)) * 0.9
         break
       case 'PERC':
-        const beat = Math.floor(time * 4) % 4
+        const beat = Math.floor((time + clip.startTime) * 4) % 4
         if (beat === 0) {
           amplitude = Math.exp(-((time % 1) * 8)) * 1.2
         } else if (beat === 2) {
@@ -292,13 +410,13 @@ function generateWaveformData(track) {
         }
         break
       case 'WIND':
-        amplitude = Math.sin(time * 3 + Math.sin(time * 0.5)) * 0.7
+        amplitude = Math.sin(time * 3 + Math.sin((time + clip.startTime) * 0.5)) * 0.7
         break
       case 'PAD':
-        amplitude = Math.sin(time * 2) * 0.4 + Math.sin(time * 2.5) * 0.3
+        amplitude = Math.sin(time * 2 + clip.startTime) * 0.4 + Math.sin(time * 2.5 + clip.startTime) * 0.3
         break
       default:
-        amplitude = Math.sin(time * 4) * 0.6
+        amplitude = Math.sin(time * 4 + clip.startTime) * 0.6
     }
     
     amplitude = Math.max(0, Math.min(1, Math.abs(amplitude)))
@@ -456,9 +574,11 @@ async function initPixi() {
 // 初始化轨道数据
 function initializeTracks() {
   tracks.value.forEach(track => {
-    if (!track.waveformData.length) {
-      track.waveformData = generateWaveformData(track)
-    }
+    track.clips.forEach(clip => {
+      if (!clip.waveformData.length) {
+        clip.waveformData = generateClipWaveformData(clip, track.type)
+      }
+    })
   })
 }
 
@@ -549,16 +669,19 @@ function createTimeline() {
   }
 }
 
-// 优化的轨道创建 - 只渲染可视区域
+// 优化的轨道创建 - 支持多个clips
 function createTracks() {
   tracksContainer.removeChildren()
   updateViewportBounds()
   
+  // 使用排序后的轨道
+  const tracks = sortedTracks.value
+  
   // 只渲染可视范围内的轨道
   for (let index = viewportBounds.startTrack; index <= viewportBounds.endTrack; index++) {
-    if (index >= tracks.value.length) break
+    if (index >= tracks.length) break
     
-    const track = tracks.value[index]
+    const track = tracks[index]
     const trackContainer = new PIXI.Container()
     trackContainer.y = index * trackHeight * zoomY.value
     
@@ -571,6 +694,8 @@ function createTracks() {
       trackHeight * zoomY.value
     )
     trackBg.endFill()
+    trackBg.interactive = true
+    trackBg.trackId = track.id
     trackContainer.addChild(trackBg)
     
     // 轨道分割线 - 只渲染可视宽度
@@ -580,16 +705,129 @@ function createTracks() {
     separator.lineTo(viewportBounds.right, trackHeight * zoomY.value)
     trackContainer.addChild(separator)
     
-    // 创建波形 - 使用缓存和可视区域优化
-    if (track.waveformData.length > 0) {
-      const waveform = createOptimizedWaveform(track, index)
-      if (waveform) {
-        trackContainer.addChild(waveform)
+    // 渲染轨道中的所有clips
+    track.clips.forEach(clip => {
+      const clipStartX = clip.startTime * pixelsPerSecond * zoomX.value
+      const clipEndX = (clip.startTime + clip.duration) * pixelsPerSecond * zoomX.value
+      
+      // 只渲染在可视范围内的clips
+      if (clipEndX >= viewportBounds.left && clipStartX <= viewportBounds.right) {
+        const clipContainer = createClip(clip, track, index)
+        if (clipContainer) {
+          trackContainer.addChild(clipContainer)
+        }
       }
-    }
+    })
     
     tracksContainer.addChild(trackContainer)
   }
+}
+
+// 创建clip容器和波形
+function createClip(clip, track, trackIndex) {
+  const clipContainer = new PIXI.Container()
+  
+  const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
+  const clipHeight = trackHeight * zoomY.value
+  const clipX = clip.startTime * pixelsPerSecond * zoomX.value
+  
+  // Clip背景
+  const clipBg = new PIXI.Graphics()
+  clipBg.beginFill(PIXI.utils.hex2rgb(clip.color), 0.3)
+  clipBg.drawRoundedRect(clipX, 10, clipWidth, clipHeight - 20, 6)
+  clipBg.endFill()
+  
+  // Clip边框
+  clipBg.lineStyle(2, PIXI.utils.hex2rgb(clip.color), track.isMuted ? 0.4 : 0.8)
+  clipBg.drawRoundedRect(clipX, 10, clipWidth, clipHeight - 20, 6)
+  
+  // 设置交互
+  clipBg.interactive = true
+  clipBg.buttonMode = true
+  clipBg.clipId = clip.id
+  clipBg.trackId = track.id
+  
+  // 添加鼠标事件
+  clipBg.on('pointerdown', (event) => handleClipMouseDown(event, clip, track))
+  clipBg.on('pointerover', () => clipBg.alpha = 0.8)
+  clipBg.on('pointerout', () => clipBg.alpha = 1.0)
+  
+  clipContainer.addChild(clipBg)
+  
+  // 创建波形
+  if (clip.waveformData && clip.waveformData.length > 0) {
+    const waveform = createClipWaveform(clip, track)
+    if (waveform) {
+      waveform.x = clipX
+      clipContainer.addChild(waveform)
+    }
+  }
+  
+  // Clip标题
+  const clipText = new PIXI.Text(clip.name, {
+    fontSize: 12,
+    fill: 0xffffff,
+    fontWeight: 'bold'
+  })
+  clipText.x = clipX + 8
+  clipText.y = 15
+  clipContainer.addChild(clipText)
+  
+  // Clip时间信息
+  const timeText = new PIXI.Text(`${clip.duration.toFixed(1)}s`, {
+    fontSize: 10,
+    fill: 0xcccccc
+  })
+  timeText.x = clipX + 8
+  timeText.y = clipHeight - 25
+  clipContainer.addChild(timeText)
+  
+  return clipContainer
+}
+
+// 创建clip内的波形
+function createClipWaveform(clip, track) {
+  const waveformContainer = new PIXI.Container()
+  const waveformData = clip.waveformData
+  
+  if (!waveformData || waveformData.length === 0) return null
+  
+  const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
+  const clipHeight = trackHeight * zoomY.value
+  const pointWidth = clipWidth / waveformData.length
+  
+  const color = PIXI.utils.hex2rgb(clip.color)
+  const alpha = track.isMuted ? 0.3 : 0.6
+  
+  // 创建波形路径
+  const waveform = new PIXI.Graphics()
+  waveform.alpha = alpha
+  
+  const baselineY = clipHeight / 2
+  const amplitudeScale = (clipHeight - 40) / 4 // 留出空间给文字
+  
+  waveform.beginFill(color, 0.6)
+  waveform.moveTo(0, baselineY)
+  
+  // 上半部分路径
+  for (let i = 0; i < waveformData.length; i++) {
+    const x = i * pointWidth
+    const amplitude = waveformData[i] * amplitudeScale
+    waveform.lineTo(x, baselineY - amplitude)
+  }
+  
+  // 下半部分路径（镜像）
+  for (let i = waveformData.length - 1; i >= 0; i--) {
+    const x = i * pointWidth
+    const amplitude = waveformData[i] * amplitudeScale
+    waveform.lineTo(x, baselineY + amplitude)
+  }
+  
+  waveform.closePath()
+  waveform.endFill()
+  
+  waveformContainer.addChild(waveform)
+  return waveformContainer
 }
 
 // 优化的波形创建 - 支持缓存和可视区域渲染
@@ -996,6 +1234,126 @@ function stopScrollbarDrag() {
   document.removeEventListener('mouseup', stopScrollbarDrag)
 }
 
+// Clip拖拽事件处理
+function handleClipMouseDown(event, clip, track) {
+  event.stopPropagation()
+  
+  clipDrag.isDragging = true
+  clipDrag.draggedClip = clip
+  clipDrag.draggedTrackId = track.id
+  clipDrag.startX = event.data.global.x
+  clipDrag.startTime = clip.startTime
+  clipDrag.offsetX = 0
+  
+  // 添加全局事件监听
+  document.addEventListener('pointermove', handleClipDrag)
+  document.addEventListener('pointerup', stopClipDrag)
+  
+  console.log('开始拖拽片段:', clip.name)
+}
+
+function handleClipDrag(event) {
+  if (!clipDrag.isDragging) return
+  
+  const deltaX = event.clientX - clipDrag.startX
+  clipDrag.offsetX = deltaX
+  
+  // 计算新的时间位置
+  const newTime = clipDrag.startTime + (deltaX / (pixelsPerSecond * zoomX.value))
+  const snapTime = Math.max(0, Math.round(newTime * 4) / 4) // 1/4秒对齐
+  
+  // 更新clip位置
+  if (clipDrag.draggedClip) {
+    clipDrag.draggedClip.startTime = snapTime
+  }
+  
+  // 重新渲染
+  createTracks()
+  needsRedraw = true
+}
+
+function stopClipDrag() {
+  if (clipDrag.isDragging) {
+    console.log('停止拖拽片段:', clipDrag.draggedClip?.name, '新位置:', clipDrag.draggedClip?.startTime)
+  }
+  
+  clipDrag.isDragging = false
+  clipDrag.draggedClip = null
+  clipDrag.draggedTrackId = null
+  
+  // 移除全局事件监听
+  document.removeEventListener('pointermove', handleClipDrag)
+  document.removeEventListener('pointerup', stopClipDrag)
+}
+
+// 轨道拖拽事件处理
+function handleTrackMouseDown(event, track, index) {
+  // 只在拖拽手柄区域响应
+  if (!event.target.closest('.drag-handle')) return
+  
+  event.preventDefault()
+  event.stopPropagation()
+  
+  trackDrag.isDragging = true
+  trackDrag.draggedTrackId = track.id
+  trackDrag.startY = event.clientY
+  trackDrag.startOrder = track.order
+  
+  // 添加全局事件监听
+  document.addEventListener('mousemove', handleTrackDrag)
+  document.addEventListener('mouseup', stopTrackDrag)
+  
+  console.log('开始拖拽轨道:', track.name)
+}
+
+function handleTrackDrag(event) {
+  if (!trackDrag.isDragging) return
+  
+  const deltaY = event.clientY - trackDrag.startY
+  const trackHeightScaled = trackHeight * zoomY.value
+  const orderDelta = Math.round(deltaY / trackHeightScaled)
+  const newOrder = Math.max(0, Math.min(tracks.value.length - 1, trackDrag.startOrder + orderDelta))
+  
+  // 找到被拖拽的轨道
+  const draggedTrack = tracks.value.find(t => t.id === trackDrag.draggedTrackId)
+  if (!draggedTrack) return
+  
+  // 只在order真正改变时更新
+  if (draggedTrack.order !== newOrder) {
+    // 更新其他轨道的order
+    tracks.value.forEach(track => {
+      if (track.id === trackDrag.draggedTrackId) {
+        track.order = newOrder
+      } else if (track.order >= Math.min(draggedTrack.order, newOrder) && 
+                 track.order <= Math.max(draggedTrack.order, newOrder)) {
+        if (newOrder > draggedTrack.order) {
+          track.order -= 1
+        } else {
+          track.order += 1
+        }
+      }
+    })
+    
+    // 重新渲染
+    createTracks()
+    needsRedraw = true
+  }
+}
+
+function stopTrackDrag() {
+  if (trackDrag.isDragging) {
+    const draggedTrack = tracks.value.find(t => t.id === trackDrag.draggedTrackId)
+    console.log('停止拖拽轨道:', draggedTrack?.name, '新顺序:', draggedTrack?.order)
+  }
+  
+  trackDrag.isDragging = false
+  trackDrag.draggedTrackId = null
+  
+  // 移除全局事件监听
+  document.removeEventListener('mousemove', handleTrackDrag)
+  document.removeEventListener('mouseup', stopTrackDrag)
+}
+
 // 轨道控制
 function toggleSolo(trackId) {
   const track = tracks.value.find(t => t.id === trackId)
@@ -1258,13 +1616,68 @@ onUnmounted(() => {
 .track-info {
   position: absolute;
   width: 100%;
-  height: 120px;
   padding: 15px;
   box-sizing: border-box;
   border-bottom: 1px solid #333;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 10px;
+  cursor: default;
+  transition: background-color 0.2s;
+}
+
+.track-info:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.track-info.track-dragging {
+  background: rgba(16, 185, 129, 0.1);
+  border-left: 3px solid #10b981;
+  z-index: 1000;
+}
+
+.drag-handle {
+  width: 20px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  padding: 5px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.drag-handle:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-dots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+
+.dot {
+  width: 3px;
+  height: 3px;
+  background: #666;
+  border-radius: 50%;
+}
+
+.drag-handle:hover .dot {
+  background: #999;
+}
+
+.track-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .track-header h4 {
