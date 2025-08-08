@@ -49,30 +49,34 @@
     <div 
       ref="pixiContainer" 
       class="pixi-container"
+      tabindex="0"
       @wheel="handleWheel"
       @mousedown="handleMouseDown"
       @mousemove="handleMouseMove"
       @mouseup="handleMouseUp"
       @mouseleave="handleMouseUp"
+      @focus="handleFocus"
     >
       <!-- 滚动条 -->
       <div class="scrollbars">
         <div 
           class="horizontal-scrollbar"
-          @mousedown="startHorizontalScroll"
+          @mousedown="handleHorizontalScrollClick"
         >
           <div 
             class="scroll-thumb"
             :style="horizontalThumbStyle"
+            @mousedown.stop="startHorizontalScrollDrag"
           ></div>
         </div>
         <div 
           class="vertical-scrollbar"
-          @mousedown="startVerticalScroll"
+          @mousedown="handleVerticalScrollClick"
         >
           <div 
             class="scroll-thumb"
             :style="verticalThumbStyle"
+            @mousedown.stop="startVerticalScrollDrag"
           ></div>
         </div>
       </div>
@@ -147,6 +151,16 @@ const mouse = reactive({
   lastX: 0,
   lastY: 0,
   isDragging: false
+})
+
+// 滚动条拖拽状态
+const scrollbarDrag = reactive({
+  isHorizontalDragging: false,
+  isVerticalDragging: false,
+  startX: 0,
+  startY: 0,
+  startScrollX: 0,
+  startScrollY: 0
 })
 
 // PixiJS 相关变量
@@ -801,39 +815,53 @@ function handleWheel(event) {
   event.preventDefault()
   
   if (event.ctrlKey || event.metaKey) {
-    // 缩放
+    // 缩放操作
     const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1
     if (event.shiftKey) {
+      // Ctrl+Shift+滚轮：垂直缩放
       zoomY.value = Math.max(0.5, Math.min(3, zoomY.value * zoomFactor))
     } else {
+      // Ctrl+滚轮：水平缩放
       zoomX.value = Math.max(0.1, Math.min(5, zoomX.value * zoomFactor))
     }
     updateZoom()
   } else {
-    // 滚动
+    // 滚动操作
+    const scrollSpeed = 50 // 滚动速度
+    
     if (event.shiftKey) {
-      scrollX.value = Math.max(0, scrollX.value + event.deltaY)
+      // Shift+滚轮：水平滚动
+      const maxScrollX = Math.max(0, maxDuration * pixelsPerSecond * zoomX.value - (pixiContainer.value?.clientWidth || 800))
+      scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value + event.deltaY * scrollSpeed / 100))
     } else {
-      scrollY.value = Math.max(0, scrollY.value + event.deltaY)
+      // 普通滚轮：垂直滚动
+      const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
+      const maxScrollY = Math.max(0, tracks.value.length * trackHeight * zoomY.value - containerHeight)
+      scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value + event.deltaY * scrollSpeed / 100))
     }
     updateViewport()
   }
 }
 
 function handleMouseDown(event) {
+  const rect = pixiContainer.value.getBoundingClientRect()
+  const localY = event.clientY - rect.top
+  
   mouse.isDown = true
   mouse.lastX = event.clientX
   mouse.lastY = event.clientY
+  mouse.isDragging = false
   
-  // 点击设置播放位置
-  const rect = pixiContainer.value.getBoundingClientRect()
-  const localX = event.clientX - rect.left + scrollX.value
-  const clickTime = localX / (pixelsPerSecond * zoomX.value)
-  
-  if (event.clientY - rect.top < timelineHeight) {
+  // 如果点击在时间线区域，设置播放位置
+  if (localY < timelineHeight) {
+    const localX = event.clientX - rect.left + scrollX.value
+    const clickTime = localX / (pixelsPerSecond * zoomX.value)
     currentTime.value = Math.max(0, Math.min(maxDuration, clickTime))
     updatePlayhead()
   }
+  
+  // 设置鼠标样式
+  pixiContainer.value.style.cursor = 'grabbing'
 }
 
 function handleMouseMove(event) {
@@ -841,20 +869,131 @@ function handleMouseMove(event) {
     const deltaX = event.clientX - mouse.lastX
     const deltaY = event.clientY - mouse.lastY
     
-    scrollX.value = Math.max(0, scrollX.value - deltaX)
-    scrollY.value = Math.max(0, scrollY.value - deltaY)
+    // 检测是否开始拖拽（防止误触）
+    if (!mouse.isDragging && (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3)) {
+      mouse.isDragging = true
+    }
+    
+    if (mouse.isDragging) {
+      // 计算滚动边界
+      const containerWidth = pixiContainer.value?.clientWidth || 800
+      const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
+      const maxScrollX = Math.max(0, maxDuration * pixelsPerSecond * zoomX.value - containerWidth)
+      const maxScrollY = Math.max(0, tracks.value.length * trackHeight * zoomY.value - containerHeight)
+      
+      // 应用滚动（反向移动）
+      scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value - deltaX))
+      scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value - deltaY))
+      
+      updateViewport()
+    }
     
     mouse.lastX = event.clientX
     mouse.lastY = event.clientY
-    mouse.isDragging = true
-    
-    updateViewport()
   }
 }
 
 function handleMouseUp() {
   mouse.isDown = false
   mouse.isDragging = false
+  
+  // 停止滚动条拖拽
+  scrollbarDrag.isHorizontalDragging = false
+  scrollbarDrag.isVerticalDragging = false
+  
+  // 恢复鼠标样式
+  if (pixiContainer.value) {
+    pixiContainer.value.style.cursor = 'grab'
+  }
+}
+
+function handleFocus() {
+  // 当容器获得焦点时，确保可以接收键盘事件
+  console.log('🎯 编辑器获得焦点，可以使用键盘快捷键')
+}
+
+// 滚动条相关事件处理
+function handleHorizontalScrollClick(event) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  const clickX = event.clientX - rect.left
+  const containerWidth = pixiContainer.value?.clientWidth || 800
+  const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+  const maxScrollX = Math.max(0, contentWidth - containerWidth)
+  
+  // 计算点击位置对应的滚动值
+  const scrollRatio = clickX / rect.width
+  scrollX.value = Math.max(0, Math.min(maxScrollX, scrollRatio * contentWidth))
+  updateViewport()
+}
+
+function handleVerticalScrollClick(event) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  const clickY = event.clientY - rect.top
+  const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
+  const contentHeight = tracks.value.length * trackHeight * zoomY.value
+  const maxScrollY = Math.max(0, contentHeight - containerHeight)
+  
+  // 计算点击位置对应的滚动值
+  const scrollRatio = clickY / rect.height
+  scrollY.value = Math.max(0, Math.min(maxScrollY, scrollRatio * contentHeight))
+  updateViewport()
+}
+
+function startHorizontalScrollDrag(event) {
+  scrollbarDrag.isHorizontalDragging = true
+  scrollbarDrag.startX = event.clientX
+  scrollbarDrag.startScrollX = scrollX.value
+  
+  // 添加全局鼠标事件监听
+  document.addEventListener('mousemove', handleScrollbarDrag)
+  document.addEventListener('mouseup', stopScrollbarDrag)
+}
+
+function startVerticalScrollDrag(event) {
+  scrollbarDrag.isVerticalDragging = true
+  scrollbarDrag.startY = event.clientY
+  scrollbarDrag.startScrollY = scrollY.value
+  
+  // 添加全局鼠标事件监听
+  document.addEventListener('mousemove', handleScrollbarDrag)
+  document.addEventListener('mouseup', stopScrollbarDrag)
+}
+
+function handleScrollbarDrag(event) {
+  if (scrollbarDrag.isHorizontalDragging) {
+    const deltaX = event.clientX - scrollbarDrag.startX
+    const containerWidth = pixiContainer.value?.clientWidth || 800
+    const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+    const maxScrollX = Math.max(0, contentWidth - containerWidth)
+    
+    // 根据滚动条的移动比例计算滚动值
+    const scrollRatio = deltaX / containerWidth
+    const newScrollX = scrollbarDrag.startScrollX + scrollRatio * contentWidth
+    scrollX.value = Math.max(0, Math.min(maxScrollX, newScrollX))
+    updateViewport()
+  }
+  
+  if (scrollbarDrag.isVerticalDragging) {
+    const deltaY = event.clientY - scrollbarDrag.startY
+    const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
+    const contentHeight = tracks.value.length * trackHeight * zoomY.value
+    const maxScrollY = Math.max(0, contentHeight - containerHeight)
+    
+    // 根据滚动条的移动比例计算滚动值
+    const scrollRatio = deltaY / containerHeight
+    const newScrollY = scrollbarDrag.startScrollY + scrollRatio * contentHeight
+    scrollY.value = Math.max(0, Math.min(maxScrollY, newScrollY))
+    updateViewport()
+  }
+}
+
+function stopScrollbarDrag() {
+  scrollbarDrag.isHorizontalDragging = false
+  scrollbarDrag.isVerticalDragging = false
+  
+  // 移除全局事件监听
+  document.removeEventListener('mousemove', handleScrollbarDrag)
+  document.removeEventListener('mouseup', stopScrollbarDrag)
 }
 
 // 轨道控制
@@ -913,18 +1052,71 @@ function handleResize() {
   }
 }
 
+// 键盘事件处理
+function handleKeyDown(event) {
+  const scrollSpeed = 50
+  const containerWidth = pixiContainer.value?.clientWidth || 800
+  const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
+  const maxScrollX = Math.max(0, maxDuration * pixelsPerSecond * zoomX.value - containerWidth)
+  const maxScrollY = Math.max(0, tracks.value.length * trackHeight * zoomY.value - containerHeight)
+  
+  switch(event.key) {
+    case 'ArrowLeft':
+      event.preventDefault()
+      scrollX.value = Math.max(0, scrollX.value - scrollSpeed)
+      updateViewport()
+      break
+    case 'ArrowRight':
+      event.preventDefault()
+      scrollX.value = Math.min(maxScrollX, scrollX.value + scrollSpeed)
+      updateViewport()
+      break
+    case 'ArrowUp':
+      event.preventDefault()
+      scrollY.value = Math.max(0, scrollY.value - scrollSpeed)
+      updateViewport()
+      break
+    case 'ArrowDown':
+      event.preventDefault()
+      scrollY.value = Math.min(maxScrollY, scrollY.value + scrollSpeed)
+      updateViewport()
+      break
+    case 'Home':
+      event.preventDefault()
+      scrollX.value = 0
+      scrollY.value = 0
+      updateViewport()
+      break
+    case 'End':
+      event.preventDefault()
+      scrollX.value = maxScrollX
+      updateViewport()
+      break
+    case ' ':
+      event.preventDefault()
+      togglePlayback()
+      break
+  }
+}
+
 // 生命周期
 onMounted(async () => {
   await nextTick()
   await initPixi()
   window.addEventListener('resize', handleResize)
+  window.addEventListener('keydown', handleKeyDown)
 })
 
 onUnmounted(() => {
   if (app) {
     window.removeEventListener('resize', handleResize)
+    window.removeEventListener('keydown', handleKeyDown)
     app.destroy(true)
   }
+  
+  // 清理滚动条事件监听
+  document.removeEventListener('mousemove', handleScrollbarDrag)
+  document.removeEventListener('mouseup', stopScrollbarDrag)
 })
 </script>
 
@@ -996,10 +1188,15 @@ onUnmounted(() => {
   height: calc(100% - 80px);
   overflow: hidden;
   cursor: grab;
+  outline: none; /* 移除焦点时的边框 */
 }
 
 .pixi-container:active {
   cursor: grabbing;
+}
+
+.pixi-container:focus {
+  box-shadow: inset 0 0 0 2px #10b981; /* 获得焦点时的提示 */
 }
 
 .scrollbars {
