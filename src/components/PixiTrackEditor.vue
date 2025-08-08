@@ -83,14 +83,14 @@
     </div>
 
     <!-- 轨道信息侧边栏 -->
-    <div class="track-sidebar">
+    <div class="track-sidebar" :style="{ top: (80 + timelineHeight) + 'px' }">
       <div 
         v-for="(track, index) in sortedTracks" 
         :key="track.id"
         class="track-info"
         :class="{ 'track-dragging': trackDrag.draggedTrackId === track.id }"
         :style="{ 
-          top: (index * trackHeight * zoomY) + 'px',
+          top: (index * trackHeight * zoomY - scrollY) + 'px',
           height: (trackHeight * zoomY) + 'px'
         }"
         @mousedown="handleTrackMouseDown($event, track, index)"
@@ -381,7 +381,7 @@ const horizontalThumbStyle = computed(() => {
 
 const verticalThumbStyle = computed(() => {
   const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
-  const contentHeight = tracks.value.length * trackHeight * zoomY.value
+  const contentHeight = sortedTracks.value.length * trackHeight * zoomY.value
   
   if (contentHeight <= containerHeight) {
     // 内容不超出容器时，隐藏滚动条
@@ -608,7 +608,7 @@ function updateViewportBounds() {
   
   // 计算可视轨道范围
   const startTrack = Math.max(0, Math.floor(scrollY.value / (trackHeight * zoomY.value)))
-  const endTrack = Math.min(tracks.value.length - 1, 
+  const endTrack = Math.min(sortedTracks.value.length - 1, 
     Math.ceil((scrollY.value + containerHeight) / (trackHeight * zoomY.value)))
   
   viewportBounds = {
@@ -1079,17 +1079,20 @@ function handleWheel(event) {
     updateZoom()
   } else {
     // 滚动操作
-    const scrollSpeed = 50 // 滚动速度
+    const scrollSpeed = 1 // 滚动速度
     
     if (event.shiftKey) {
       // Shift+滚轮：水平滚动
-      const maxScrollX = Math.max(0, maxDuration * pixelsPerSecond * zoomX.value - (pixiContainer.value?.clientWidth || 800))
-      scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value + event.deltaY * scrollSpeed / 100))
+      const containerWidth = pixiContainer.value?.clientWidth || 800
+      const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+      const maxScrollX = Math.max(0, contentWidth - containerWidth)
+      scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value + event.deltaY * scrollSpeed))
     } else {
       // 普通滚轮：垂直滚动
       const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
-      const maxScrollY = Math.max(0, tracks.value.length * trackHeight * zoomY.value - containerHeight)
-      scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value + event.deltaY * scrollSpeed / 100))
+      const contentHeight = sortedTracks.value.length * trackHeight * zoomY.value
+      const maxScrollY = Math.max(0, contentHeight - containerHeight)
+      scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value + event.deltaY * scrollSpeed))
     }
     updateViewport()
   }
@@ -1197,7 +1200,7 @@ function handleVerticalScrollClick(event) {
   const rect = event.currentTarget.getBoundingClientRect()
   const clickY = event.clientY - rect.top
   const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
-  const contentHeight = tracks.value.length * trackHeight * zoomY.value
+  const contentHeight = sortedTracks.value.length * trackHeight * zoomY.value
   const maxScrollY = Math.max(0, contentHeight - containerHeight)
   
   if (maxScrollY <= 0) return // 无需滚动
@@ -1247,7 +1250,7 @@ function handleScrollbarDrag(event) {
   if (scrollbarDrag.isVerticalDragging) {
     const deltaY = event.clientY - scrollbarDrag.startY
     const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
-    const contentHeight = tracks.value.length * trackHeight * zoomY.value
+    const contentHeight = sortedTracks.value.length * trackHeight * zoomY.value
     const maxScrollY = Math.max(0, contentHeight - containerHeight)
     
     if (maxScrollY > 0) {
@@ -1350,7 +1353,7 @@ function handleTrackDrag(event) {
   const deltaY = event.clientY - trackDrag.startY
   const trackHeightScaled = trackHeight * zoomY.value
   const orderDelta = Math.round(deltaY / trackHeightScaled)
-  const newOrder = Math.max(0, Math.min(tracks.value.length - 1, trackDrag.startOrder + orderDelta))
+  const newOrder = Math.max(0, Math.min(sortedTracks.value.length - 1, trackDrag.startOrder + orderDelta))
   
   // 找到被拖拽的轨道
   const draggedTrack = tracks.value.find(t => t.id === trackDrag.draggedTrackId)
@@ -1458,8 +1461,10 @@ function handleKeyDown(event) {
   const scrollSpeed = 50
   const containerWidth = pixiContainer.value?.clientWidth || 800
   const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
-  const maxScrollX = Math.max(0, maxDuration * pixelsPerSecond * zoomX.value - containerWidth)
-  const maxScrollY = Math.max(0, tracks.value.length * trackHeight * zoomY.value - containerHeight)
+  const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+  const contentHeight = sortedTracks.value.length * trackHeight * zoomY.value
+  const maxScrollX = Math.max(0, contentWidth - containerWidth)
+  const maxScrollY = Math.max(0, contentHeight - containerHeight)
   
   switch(event.key) {
     case 'ArrowLeft':
@@ -1646,14 +1651,14 @@ onUnmounted(() => {
 .track-sidebar {
   position: absolute;
   left: 0;
-  top: 80px;
   width: 200px;
-  height: calc(100% - 80px);
+  height: calc(100% - 140px); /* 减去控制面板和时间线高度 */
   background: rgba(0, 0, 0, 0.8);
   backdrop-filter: blur(10px);
   border-right: 2px solid #333;
   overflow: hidden;
   pointer-events: auto;
+  z-index: 10;
 }
 
 .track-info {
