@@ -62,8 +62,8 @@
             :key="track.id"
             class="track-info"
             :style="{ 
-              top: (index * trackHeight * zoomY) + 'px',
-              height: (trackHeight * zoomY) + 'px'
+              top: (index * trackHeight * zoomY.value) + 'px',
+              height: (trackHeight * zoomY.value) + 'px'
             }"
           >
             <div class="track-content">
@@ -492,6 +492,8 @@ function throttle(func, delay) {
 
 // 创建轨道（优化版本）
 function createTracks() {
+  if (!tracksContainer) return
+  
   tracksContainer.removeChildren()
   clipGraphicsCache.clear() // 清除缓存
   
@@ -522,6 +524,9 @@ function createTracks() {
     
     tracksContainer.addChild(trackContainer)
   })
+  
+  // 重置轨道容器位置
+  tracksContainer.y = 0
 }
 
 // 高性能轨道重绘（仅更新位置）
@@ -532,36 +537,66 @@ function updateClipPositions() {
       if (clipContainer && clipContainer.children.length > 0) {
         const newClipX = clip.startTime * pixelsPerSecond * zoomX.value
         
-        // 更新整个clip容器的位置
-        clipContainer.children.forEach((child, index) => {
-          if (index === 0) {
-            // 第一个child是clip背景，需要重新绘制位置
-            if (child.clear) {
-              const color = parseInt(clip.color.replace('#', ''), 16)
-              const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
-              const clipHeight = trackHeight * zoomY.value - 20
-              
-              child.clear()
-              child.beginFill(color, 0.8)
-              child.lineStyle(2, color, 1)
-              child.drawRoundedRect(newClipX, 10, clipWidth, clipHeight, 6)
-              child.endFill()
-            }
-          } else if (index === 1 && child.clear) {
-            // 第二个child是波形，重新绘制
-            if (clip.waveformData && clip.waveformData.length > 0) {
-              const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
-              const clipHeight = trackHeight * zoomY.value - 20
-              redrawWaveform(child, clip, newClipX, clipWidth, clipHeight)
-            }
-          } else if (child.text !== undefined) {
-            // 文字对象，只更新位置
-            child.x = newClipX + 8
-          }
-        })
+        // 直接使用完整重绘来确保波形跟随
+        recreateClip(clip, track, trackIndex, clipContainer)
       }
     })
   })
+}
+
+// 重新创建单个clip（保持容器，重绘内容）
+function recreateClip(clip, track, trackIndex, existingContainer) {
+  // 清空现有内容
+  existingContainer.removeChildren()
+  
+  const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
+  const clipHeight = trackHeight * zoomY.value - 20
+  const clipX = clip.startTime * pixelsPerSecond * zoomX.value
+  
+  // Clip背景
+  const clipBg = new PIXI.Graphics()
+  const color = parseInt(clip.color.replace('#', ''), 16)
+  clipBg.beginFill(color, 0.8)
+  clipBg.lineStyle(2, color, 1)
+  clipBg.drawRoundedRect(clipX, 10, clipWidth, clipHeight, 6)
+  clipBg.endFill()
+  
+  // 设置交互
+  clipBg.interactive = true
+  clipBg.buttonMode = true
+  clipBg.clip = clip
+  clipBg.track = track
+  
+  clipBg.on('pointerdown', (event) => handleClipMouseDown(event, clip, track, existingContainer))
+  clipBg.on('pointerover', () => clipBg.alpha = 0.9)
+  clipBg.on('pointerout', () => clipBg.alpha = 1.0)
+  
+  existingContainer.addChild(clipBg)
+  
+  // 创建波形（跟随clip位置）
+  if (clip.waveformData && clip.waveformData.length > 0) {
+    const waveform = createWaveform(clip, clipX, clipWidth, clipHeight)
+    existingContainer.addChild(waveform)
+  }
+  
+  // Clip标题
+  const clipText = new PIXI.Text(clip.name, {
+    fontSize: Math.max(10, 12 * zoomY.value),
+    fill: 0xffffff,
+    fontWeight: 'bold'
+  })
+  clipText.x = clipX + 8
+  clipText.y = 15
+  existingContainer.addChild(clipText)
+  
+  // Clip时间信息
+  const timeText = new PIXI.Text(`${clip.duration.toFixed(1)}s`, {
+    fontSize: Math.max(8, 10 * zoomY.value),
+    fill: 0xcccccc
+  })
+  timeText.x = clipX + 8
+  timeText.y = clipHeight - 5
+  existingContainer.addChild(timeText)
 }
 
 // 重绘波形（优化版本）
@@ -819,14 +854,24 @@ function handleWheel(event) {
     updateZoom()
   } else {
     // 滚动操作
+    const scrollSpeed = 50 // 增加滚动速度
+    
     if (event.shiftKey) {
       // 水平滚动
-      const maxScrollX = Math.max(0, maxDuration * pixelsPerSecond * zoomX.value - (pixiContainer.value?.clientWidth || 800))
-      scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value + event.deltaY))
+      const containerWidth = pixiContainer.value?.clientWidth || 800
+      const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+      const maxScrollX = Math.max(0, contentWidth - containerWidth)
+      
+      const deltaX = event.deltaY > 0 ? scrollSpeed : -scrollSpeed
+      scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value + deltaX))
     } else {
       // 垂直滚动
-      const maxScrollY = Math.max(0, tracks.value.length * trackHeight * zoomY.value - (pixiContainer.value?.clientHeight || 600))
-      scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value + event.deltaY))
+      const containerHeight = pixiContainer.value?.clientHeight || 400
+      const contentHeight = tracks.value.length * trackHeight * zoomY.value
+      const maxScrollY = Math.max(0, contentHeight - containerHeight)
+      
+      const deltaY = event.deltaY > 0 ? scrollSpeed : -scrollSpeed
+      scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value + deltaY))
     }
     updateViewport()
   }
@@ -854,8 +899,13 @@ function handleMouseMove(event) {
     }
     
     if (mouse.isDragging) {
-      const maxScrollX = Math.max(0, maxDuration * pixelsPerSecond * zoomX.value - (pixiContainer.value?.clientWidth || 800))
-      const maxScrollY = Math.max(0, tracks.value.length * trackHeight * zoomY.value - (pixiContainer.value?.clientHeight || 600))
+      const containerWidth = pixiContainer.value?.clientWidth || 800
+      const containerHeight = pixiContainer.value?.clientHeight || 400
+      const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+      const contentHeight = tracks.value.length * trackHeight * zoomY.value
+      
+      const maxScrollX = Math.max(0, contentWidth - containerWidth)
+      const maxScrollY = Math.max(0, contentHeight - containerHeight)
       
       scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value - deltaX))
       scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value - deltaY))
@@ -887,6 +937,11 @@ function updateViewport() {
   if (mainContainer) {
     mainContainer.x = -scrollX.value
     mainContainer.y = -scrollY.value
+  }
+  
+  // 确保轨道容器正确定位
+  if (tracksContainer) {
+    tracksContainer.y = -scrollY.value
   }
   
   updatePlayhead()
