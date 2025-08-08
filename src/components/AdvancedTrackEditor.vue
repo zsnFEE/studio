@@ -157,6 +157,12 @@ let tracksContainer = null
 let playheadLine = null
 let timelineCtx = null
 
+// 性能优化：拖拽缓存
+let clipGraphicsCache = new Map() // 缓存clip图形对象
+let dragPreviewGraphics = null    // 拖拽预览图形
+let lastRenderTime = 0           // 最后渲染时间
+const RENDER_THROTTLE = 16       // 渲染节流 (60fps)
+
 // 鼠标和拖拽状态
 const mouse = reactive({
   isDown: false,
@@ -168,9 +174,12 @@ const mouse = reactive({
 const clipDrag = reactive({
   isDragging: false,
   draggedClip: null,
+  draggedClipGraphics: null,  // 被拖拽的clip图形对象
   startX: 0,
   startTime: 0,
-  offsetX: 0
+  offsetX: 0,
+  lastUpdateTime: 0,          // 最后更新时间
+  pendingUpdate: false        // 是否有待处理的更新
 })
 
 // 计算属性
@@ -461,9 +470,30 @@ function drawTimeline() {
   }
 }
 
-// 创建轨道
+// 节流函数
+function throttle(func, delay) {
+  let timeoutId
+  let lastExecTime = 0
+  return function (...args) {
+    const currentTime = Date.now()
+    
+    if (currentTime - lastExecTime > delay) {
+      func.apply(this, args)
+      lastExecTime = currentTime
+    } else {
+      clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        func.apply(this, args)
+        lastExecTime = Date.now()
+      }, delay - (currentTime - lastExecTime))
+    }
+  }
+}
+
+// 创建轨道（优化版本）
 function createTracks() {
   tracksContainer.removeChildren()
+  clipGraphicsCache.clear() // 清除缓存
   
   tracks.value.forEach((track, index) => {
     const trackContainer = new PIXI.Container()
@@ -486,6 +516,7 @@ function createTracks() {
     // 创建clips
     track.clips.forEach(clip => {
       const clipContainer = createClip(clip, track, index)
+      clipGraphicsCache.set(clip.id, clipContainer) // 缓存clip图形
       trackContainer.addChild(clipContainer)
     })
     
@@ -493,9 +524,84 @@ function createTracks() {
   })
 }
 
-// 创建clip
+// 高性能轨道重绘（仅更新位置）
+function updateClipPositions() {
+  tracks.value.forEach((track, trackIndex) => {
+    track.clips.forEach(clip => {
+      const clipContainer = clipGraphicsCache.get(clip.id)
+      if (clipContainer && clipContainer.children.length > 0) {
+        const newClipX = clip.startTime * pixelsPerSecond * zoomX.value
+        
+        // 更新整个clip容器的位置
+        clipContainer.children.forEach((child, index) => {
+          if (index === 0) {
+            // 第一个child是clip背景，需要重新绘制位置
+            if (child.clear) {
+              const color = parseInt(clip.color.replace('#', ''), 16)
+              const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
+              const clipHeight = trackHeight * zoomY.value - 20
+              
+              child.clear()
+              child.beginFill(color, 0.8)
+              child.lineStyle(2, color, 1)
+              child.drawRoundedRect(newClipX, 10, clipWidth, clipHeight, 6)
+              child.endFill()
+            }
+          } else if (index === 1 && child.clear) {
+            // 第二个child是波形，重新绘制
+            if (clip.waveformData && clip.waveformData.length > 0) {
+              const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
+              const clipHeight = trackHeight * zoomY.value - 20
+              redrawWaveform(child, clip, newClipX, clipWidth, clipHeight)
+            }
+          } else if (child.text !== undefined) {
+            // 文字对象，只更新位置
+            child.x = newClipX + 8
+          }
+        })
+      }
+    })
+  })
+}
+
+// 重绘波形（优化版本）
+function redrawWaveform(waveformGraphics, clip, clipX, clipWidth, clipHeight) {
+  const waveformData = clip.waveformData
+  if (!waveformData || waveformData.length === 0) return
+  
+  waveformGraphics.clear()
+  
+  const pointWidth = clipWidth / waveformData.length
+  const color = parseInt(clip.color.replace('#', ''), 16)
+  
+  waveformGraphics.beginFill(color, 0.4)
+  
+  const baselineY = clipHeight / 2 + 10
+  const amplitudeScale = (clipHeight - 30) / 4
+  
+  // 绘制波形上半部分
+  waveformGraphics.moveTo(clipX, baselineY)
+  for (let i = 0; i < waveformData.length; i++) {
+    const x = clipX + i * pointWidth
+    const amplitude = waveformData[i] * amplitudeScale
+    waveformGraphics.lineTo(x, baselineY - amplitude)
+  }
+  
+  // 绘制波形下半部分
+  for (let i = waveformData.length - 1; i >= 0; i--) {
+    const x = clipX + i * pointWidth
+    const amplitude = waveformData[i] * amplitudeScale
+    waveformGraphics.lineTo(x, baselineY + amplitude)
+  }
+  
+  waveformGraphics.closePath()
+  waveformGraphics.endFill()
+}
+
+// 创建clip（优化版本）
 function createClip(clip, track, trackIndex) {
   const clipContainer = new PIXI.Container()
+  clipContainer.clipId = clip.id // 标记ID便于查找
   
   const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
   const clipHeight = trackHeight * zoomY.value - 20
@@ -508,6 +614,7 @@ function createClip(clip, track, trackIndex) {
   clipBg.lineStyle(2, color, 1)
   clipBg.drawRoundedRect(clipX, 10, clipWidth, clipHeight, 6)
   clipBg.endFill()
+  clipBg.originalX = clipX // 记录原始X位置
   
   // 设置交互
   clipBg.interactive = true
@@ -515,7 +622,7 @@ function createClip(clip, track, trackIndex) {
   clipBg.clip = clip
   clipBg.track = track
   
-  clipBg.on('pointerdown', (event) => handleClipMouseDown(event, clip, track))
+  clipBg.on('pointerdown', (event) => handleClipMouseDown(event, clip, track, clipContainer))
   clipBg.on('pointerover', () => clipBg.alpha = 0.9)
   clipBg.on('pointerout', () => clipBg.alpha = 1.0)
   
@@ -524,6 +631,7 @@ function createClip(clip, track, trackIndex) {
   // 创建波形
   if (clip.waveformData && clip.waveformData.length > 0) {
     const waveform = createWaveform(clip, clipX, clipWidth, clipHeight)
+    waveform.originalX = clipX // 记录原始X位置
     clipContainer.addChild(waveform)
   }
   
@@ -535,6 +643,7 @@ function createClip(clip, track, trackIndex) {
   })
   clipText.x = clipX + 8
   clipText.y = 15
+  clipText.originalX = clipX + 8 // 记录原始X位置
   clipContainer.addChild(clipText)
   
   // Clip时间信息
@@ -544,6 +653,7 @@ function createClip(clip, track, trackIndex) {
   })
   timeText.x = clipX + 8
   timeText.y = clipHeight - 5
+  timeText.originalX = clipX + 8 // 记录原始X位置
   clipContainer.addChild(timeText)
   
   return clipContainer
@@ -587,46 +697,110 @@ function createWaveform(clip, clipX, clipWidth, clipHeight) {
   return waveformContainer
 }
 
-// Clip拖拽事件
-function handleClipMouseDown(event, clip, track) {
+// 节流的轨道更新函数
+const throttledUpdateClipPositions = throttle(updateClipPositions, RENDER_THROTTLE)
+
+// Clip拖拽事件（优化版本）
+function handleClipMouseDown(event, clip, track, clipContainer) {
   event.stopPropagation()
   
   clipDrag.isDragging = true
   clipDrag.draggedClip = clip
+  clipDrag.draggedClipGraphics = clipContainer
   clipDrag.startX = event.data.global.x
   clipDrag.startTime = clip.startTime
   clipDrag.offsetX = 0
+  clipDrag.lastUpdateTime = Date.now()
+  clipDrag.pendingUpdate = false
   
   selectedClip.value = clip
   
-  document.addEventListener('pointermove', handleClipDrag)
+  // 创建拖拽预览（半透明副本）
+  if (!dragPreviewGraphics) {
+    dragPreviewGraphics = new PIXI.Graphics()
+    dragPreviewGraphics.alpha = 0.5
+    tracksContainer.addChild(dragPreviewGraphics)
+  }
+  
+  document.addEventListener('pointermove', handleClipDragOptimized)
   document.addEventListener('pointerup', stopClipDrag)
   
   console.log('开始拖拽片段:', clip.name)
 }
 
-function handleClipDrag(event) {
+// 优化的拖拽处理函数
+function handleClipDragOptimized(event) {
   if (!clipDrag.isDragging) return
   
+  const currentTime = Date.now()
+  
+  // 节流：限制更新频率
+  if (currentTime - clipDrag.lastUpdateTime < RENDER_THROTTLE) {
+    if (!clipDrag.pendingUpdate) {
+      clipDrag.pendingUpdate = true
+      requestAnimationFrame(() => {
+        if (clipDrag.isDragging) {
+          updateDragPosition(event)
+        }
+        clipDrag.pendingUpdate = false
+      })
+    }
+    return
+  }
+  
+  updateDragPosition(event)
+  clipDrag.lastUpdateTime = currentTime
+}
+
+// 更新拖拽位置（分离的函数）
+function updateDragPosition(event) {
   const deltaX = event.clientX - clipDrag.startX
   const newTime = clipDrag.startTime + (deltaX / (pixelsPerSecond * zoomX.value))
   const snapTime = Math.max(0, Math.round(newTime * 4) / 4) // 1/4秒对齐
   
   if (clipDrag.draggedClip && Math.abs(clipDrag.draggedClip.startTime - snapTime) > 0.01) {
     clipDrag.draggedClip.startTime = snapTime
-    createTracks()
+    
+    // 使用快速位置更新而不是完全重绘
+    throttledUpdateClipPositions()
+    
+    // 更新拖拽预览位置
+    if (dragPreviewGraphics && clipDrag.draggedClipGraphics) {
+      const newX = snapTime * pixelsPerSecond * zoomX.value
+      dragPreviewGraphics.clear()
+      
+      // 绘制预览框
+      const clipWidth = clipDrag.draggedClip.duration * pixelsPerSecond * zoomX.value
+      const clipHeight = trackHeight * zoomY.value - 20
+      const color = parseInt(clipDrag.draggedClip.color.replace('#', ''), 16)
+      
+      dragPreviewGraphics.lineStyle(2, color, 0.8)
+      dragPreviewGraphics.beginFill(color, 0.2)
+      dragPreviewGraphics.drawRoundedRect(newX, clipDrag.draggedClipGraphics.y + 10, clipWidth, clipHeight, 6)
+      dragPreviewGraphics.endFill()
+    }
   }
 }
 
 function stopClipDrag() {
   if (clipDrag.isDragging) {
     console.log('停止拖拽片段:', clipDrag.draggedClip?.name, '新位置:', clipDrag.draggedClip?.startTime)
+    
+    // 清除拖拽预览
+    if (dragPreviewGraphics) {
+      dragPreviewGraphics.clear()
+    }
+    
+    // 最终重绘确保一致性
+    createTracks()
   }
   
   clipDrag.isDragging = false
   clipDrag.draggedClip = null
+  clipDrag.draggedClipGraphics = null
+  clipDrag.pendingUpdate = false
   
-  document.removeEventListener('pointermove', handleClipDrag)
+  document.removeEventListener('pointermove', handleClipDragOptimized)
   document.removeEventListener('pointerup', stopClipDrag)
 }
 
@@ -701,7 +875,7 @@ function handleMouseUp() {
   }
 }
 
-// 更新缩放
+// 更新缩放（优化版本）
 function updateZoom() {
   createTracks()
   drawTimeline()
@@ -808,8 +982,12 @@ onUnmounted(() => {
     window.removeEventListener('resize', handleResize)
     app.destroy(true)
   }
-  document.removeEventListener('pointermove', handleClipDrag)
+  
+  // 清理拖拽相关的事件监听器和缓存
+  document.removeEventListener('pointermove', handleClipDragOptimized)
   document.removeEventListener('pointerup', stopClipDrag)
+  clipGraphicsCache.clear()
+  dragPreviewGraphics = null
 })
 </script>
 
