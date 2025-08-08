@@ -45,102 +45,114 @@
       </div>
     </div>
 
-    <!-- PixiJS 渲染区域 -->
-    <div 
-      ref="pixiContainer" 
-      class="pixi-container"
-      tabindex="0"
-      @wheel="handleWheel"
-      @mousedown="handleMouseDown"
-      @mousemove="handleMouseMove"
-      @mouseup="handleMouseUp"
-      @mouseleave="handleMouseUp"
-      @focus="handleFocus"
-    >
-      <!-- 滚动条 -->
-      <div class="scrollbars">
+    <!-- 主工作区域 -->
+    <div class="main-workspace">
+      <!-- 轨道信息侧边栏 -->
+      <div class="track-sidebar">
         <div 
-          class="horizontal-scrollbar"
-          @mousedown="handleHorizontalScrollClick"
+          v-for="(track, index) in sortedTracks" 
+          :key="track.id"
+          class="track-info"
+          :class="{ 'track-dragging': trackDrag.draggedTrackId === track.id }"
+          :style="{ 
+            top: (index * trackHeight * zoomY - scrollY) + 'px',
+            height: (trackHeight * zoomY) + 'px'
+          }"
+          @mousedown="handleTrackMouseDown($event, track, index)"
+          draggable="false"
         >
-          <div 
-            class="scroll-thumb"
-            :style="horizontalThumbStyle"
-            @mousedown.stop="startHorizontalScrollDrag"
-          ></div>
-        </div>
-        <div 
-          class="vertical-scrollbar"
-          @mousedown="handleVerticalScrollClick"
-        >
-          <div 
-            class="scroll-thumb"
-            :style="verticalThumbStyle"
-            @mousedown.stop="startVerticalScrollDrag"
-          ></div>
+          <!-- 拖拽手柄 -->
+          <div class="drag-handle">
+            <div class="drag-dots">
+              <div class="dot"></div>
+              <div class="dot"></div>
+              <div class="dot"></div>
+              <div class="dot"></div>
+            </div>
+          </div>
+          
+          <div class="track-content">
+            <div class="track-header">
+              <h4 :style="{ color: track.color }">{{ track.name }}</h4>
+              <span class="track-type">{{ track.type }}</span>
+            </div>
+            
+            <div class="track-controls">
+              <t-button 
+                size="small" 
+                :theme="track.isSolo ? 'warning' : 'default'"
+                @click="toggleSolo(track.id)"
+              >
+                S
+              </t-button>
+              <t-button 
+                size="small" 
+                :theme="track.isMuted ? 'danger' : 'default'"
+                @click="toggleMute(track.id)"
+              >
+                M
+              </t-button>
+            </div>
+            
+            <div class="volume-control">
+              <t-slider 
+                v-model="track.volume" 
+                :min="0" 
+                :max="100"
+                size="small"
+                vertical
+              />
+            </div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- 轨道信息侧边栏 -->
-    <div class="track-sidebar" :style="{ top: (80 + timelineHeight) + 'px' }">
-      <div 
-        v-for="(track, index) in sortedTracks" 
-        :key="track.id"
-        class="track-info"
-        :class="{ 'track-dragging': trackDrag.draggedTrackId === track.id }"
-        :style="{ 
-          top: (index * trackHeight * zoomY - scrollY) + 'px',
-          height: (trackHeight * zoomY) + 'px'
-        }"
-        @mousedown="handleTrackMouseDown($event, track, index)"
-        draggable="false"
-      >
-        <!-- 拖拽手柄 -->
-        <div class="drag-handle">
-          <div class="drag-dots">
-            <div class="dot"></div>
-            <div class="dot"></div>
-            <div class="dot"></div>
-            <div class="dot"></div>
-          </div>
+      <!-- 时间轴和PixiJS渲染区域 -->
+      <div class="timeline-and-tracks">
+        <!-- 时间轴区域 -->
+        <div ref="timelineHeader" class="timeline-header" :style="{ height: timelineHeight + 'px' }">
+          <!-- 时间轴将通过PixiJS渲染在这里 -->
         </div>
         
-        <div class="track-content">
-          <div class="track-header">
-            <h4 :style="{ color: track.color }">{{ track.name }}</h4>
-            <span class="track-type">{{ track.type }}</span>
-          </div>
-          
-          <div class="track-controls">
-            <t-button 
-              size="small" 
-              :theme="track.isSolo ? 'warning' : 'default'"
-              @click="toggleSolo(track.id)"
+        <!-- PixiJS 渲染区域 -->
+        <div 
+          ref="pixiContainer" 
+          class="pixi-container"
+          tabindex="0"
+          @wheel="handleWheel"
+          @mousedown="handleMouseDown"
+          @mousemove="handleMouseMove"
+          @mouseup="handleMouseUp"
+          @mouseleave="handleMouseUp"
+          @focus="handleFocus"
+        >
+          <!-- 滚动条 -->
+          <div class="scrollbars">
+            <div 
+              class="horizontal-scrollbar"
+              @mousedown="handleHorizontalScrollClick"
             >
-              S
-            </t-button>
-            <t-button 
-              size="small" 
-              :theme="track.isMuted ? 'danger' : 'default'"
-              @click="toggleMute(track.id)"
+              <div 
+                class="scroll-thumb"
+                :style="horizontalThumbStyle"
+                @mousedown.stop="startHorizontalScrollDrag"
+              ></div>
+            </div>
+            <div 
+              class="vertical-scrollbar"
+              @mousedown="handleVerticalScrollClick"
             >
-              M
-            </t-button>
-          </div>
-          
-          <div class="volume-control">
-            <t-slider 
-              v-model="track.volume" 
-              :min="0" 
-              :max="100"
-              size="small"
-              vertical
-            />
+              <div 
+                class="scroll-thumb"
+                :style="verticalThumbStyle"
+                @mousedown.stop="startVerticalScrollDrag"
+              ></div>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+             </div>
+     </div>
+   </div>
   </div>
 </template>
 
@@ -150,6 +162,7 @@ import * as PIXI from 'pixi.js'
 
 // 响应式状态
 const pixiContainer = ref(null)
+const timelineHeader = ref(null)  // 时间轴容器引用
 const isPlaying = ref(false)
 const currentTime = ref(0)
 const zoomX = ref(1)
@@ -183,10 +196,12 @@ const scrollbarDrag = reactive({
 
 // PixiJS 相关变量
 let app = null
+let timelineApp = null  // 单独的时间轴应用
 let mainContainer = null
 let tracksContainer = null
 let timelineContainer = null
 let playheadLine = null
+let timelinePlayheadLine = null  // 时间轴播放头
 
 // 性能优化相关
 let viewportBounds = { left: 0, right: 0, top: 0, bottom: 0 }
@@ -454,15 +469,18 @@ function supportsOffscreenCanvas() {
 // 初始化 PixiJS
 async function initPixi() {
   const container = pixiContainer.value
-  if (!container) return
+  const timelineContainer = timelineHeader.value
+  if (!container || !timelineContainer) return
 
   // 基础配置
   const width = container.clientWidth || 800
   const height = container.clientHeight || 600
+  const timelineWidth = timelineContainer.clientWidth || 800
+  const timelineHeightValue = timelineContainer.clientHeight || 60
 
   try {
-    // 先尝试标准方式创建PixiJS应用
-    console.log('🎯 初始化PixiJS应用...')
+    // 初始化主轨道应用
+    console.log('🎯 初始化主轨道PixiJS应用...')
     
     const pixiOptions = {
       width,
@@ -477,7 +495,24 @@ async function initPixi() {
     // 优先使用标准Canvas，确保稳定性
     app = new PIXI.Application(pixiOptions)
     container.appendChild(app.view)
-    console.log('✅ 标准Canvas初始化成功')
+    console.log('✅ 主轨道Canvas初始化成功')
+
+    // 初始化时间轴应用
+    console.log('🎯 初始化时间轴PixiJS应用...')
+    
+    const timelineOptions = {
+      width: timelineWidth,
+      height: timelineHeightValue,
+      backgroundColor: 0x2a2a2a,
+      antialias: true,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+      powerPreference: 'high-performance'
+    }
+
+    timelineApp = new PIXI.Application(timelineOptions)
+    timelineContainer.appendChild(timelineApp.view)
+    console.log('✅ 时间轴Canvas初始化成功')
 
     // 如果标准方式成功，可以尝试OffscreenCanvas优化（可选）
     if (supportsOffscreenCanvas() && false) { // 暂时禁用OffscreenCanvas
@@ -540,32 +575,38 @@ async function initPixi() {
   }
 
   // 确保app正确初始化
-  if (!app || !app.stage) {
+  if (!app || !app.stage || !timelineApp || !timelineApp.stage) {
     console.error('❌ PixiJS应用未正确初始化')
     return
   }
 
   try {
-    // 创建主容器
+    // 创建主轨道容器
     mainContainer = new PIXI.Container()
     app.stage.addChild(mainContainer)
 
-    // 创建时间线容器
-    timelineContainer = new PIXI.Container()
-    timelineContainer.y = 0
-    mainContainer.addChild(timelineContainer)
-
     // 创建轨道容器
     tracksContainer = new PIXI.Container()
-    tracksContainer.y = timelineHeight
+    tracksContainer.y = 0  // 不需要偏移，因为时间轴在单独的容器中
     mainContainer.addChild(tracksContainer)
 
-    // 创建播放头
+    // 创建轨道播放头
     playheadLine = new PIXI.Graphics()
     playheadLine.lineStyle(2, 0xff4444)
     playheadLine.moveTo(0, 0)
     playheadLine.lineTo(0, height)
     mainContainer.addChild(playheadLine)
+
+    // 创建时间轴容器
+    timelineContainer = new PIXI.Container()
+    timelineApp.stage.addChild(timelineContainer)
+
+    // 创建时间轴播放头
+    timelinePlayheadLine = new PIXI.Graphics()
+    timelinePlayheadLine.lineStyle(2, 0xff4444)
+    timelinePlayheadLine.moveTo(0, 0)
+    timelinePlayheadLine.lineTo(0, timelineHeightValue)
+    timelineApp.stage.addChild(timelinePlayheadLine)
 
     // 初始化轨道数据
     initializeTracks()
@@ -625,29 +666,31 @@ function updateViewportBounds() {
 
 // 创建优化的时间线
 function createTimeline() {
+  if (!timelineContainer || !timelineApp) return
+  
   timelineContainer.removeChildren()
   updateViewportBounds()
   
-  // 只渲染可视范围的时间线背景
+  const timelineWidth = timelineHeader.value?.clientWidth || 800
+  
+  // 渲染时间线背景（全宽度）
   const timelineBackground = new PIXI.Graphics()
   timelineBackground.beginFill(0x2a2a2a)
-  timelineBackground.drawRect(
-    viewportBounds.left, 0, 
-    viewportBounds.right - viewportBounds.left, timelineHeight
-  )
+  timelineBackground.drawRect(0, 0, timelineWidth, timelineHeight)
   timelineBackground.endFill()
   timelineContainer.addChild(timelineBackground)
   
-  // 时间刻度 - 只渲染可视范围
+  // 时间刻度 - 渲染可视范围的时间
   const timeStep = Math.max(1, Math.floor(10 / zoomX.value))
   const startTick = Math.floor(viewportBounds.startTime / timeStep) * timeStep
   const endTick = Math.ceil(viewportBounds.endTime / timeStep) * timeStep
   
   for (let t = startTick; t <= endTick; t += timeStep) {
-    const x = t * pixelsPerSecond * zoomX.value
+    // 计算在时间轴容器中的x位置（减去滚动偏移）
+    const x = t * pixelsPerSecond * zoomX.value - scrollX.value
     
-    // 跳过不在可视范围内的刻度
-    if (x < viewportBounds.left || x > viewportBounds.right) continue
+    // 只渲染在时间轴容器可视范围内的刻度
+    if (x < -50 || x > timelineWidth + 50) continue
     
     // 主要刻度线
     const majorTick = new PIXI.Graphics()
@@ -670,8 +713,8 @@ function createTimeline() {
     // 次要刻度线 - 只在高缩放时显示
     if (zoomX.value > 1) {
       for (let subT = 0.2; subT < timeStep && subT < 1; subT += 0.2) {
-        const subX = (t + subT) * pixelsPerSecond * zoomX.value
-        if (subX >= viewportBounds.left && subX <= viewportBounds.right) {
+        const subX = (t + subT) * pixelsPerSecond * zoomX.value - scrollX.value
+        if (subX >= -10 && subX <= timelineWidth + 10) {
           const minorTick = new PIXI.Graphics()
           minorTick.lineStyle(1, 0x444444)
           minorTick.moveTo(subX, timelineHeight - 10)
@@ -983,8 +1026,16 @@ function updateZoom() {
 
 // 更新播放头位置
 function updatePlayhead() {
+  const playheadX = currentTime.value * pixelsPerSecond * zoomX.value
+  
+  // 更新轨道区域的播放头
   if (playheadLine) {
-    playheadLine.x = currentTime.value * pixelsPerSecond * zoomX.value - scrollX.value
+    playheadLine.x = playheadX - scrollX.value
+  }
+  
+  // 更新时间轴区域的播放头
+  if (timelinePlayheadLine) {
+    timelinePlayheadLine.x = playheadX - scrollX.value
   }
 }
 
@@ -997,10 +1048,13 @@ function updateViewport() {
     return
   }
   
+  // 更新主轨道容器位置
   if (mainContainer) {
     mainContainer.x = -scrollX.value
     mainContainer.y = -scrollY.value
   }
+  
+  // 时间轴容器不需要垂直偏移，只需要水平滚动同步
   
   // 延迟重新渲染可视区域
   clearTimeout(updateViewport.timeoutId)
@@ -1433,26 +1487,35 @@ function formatTime(seconds) {
 
 // 窗口大小调整
 function handleResize() {
-  if (app && app.renderer && pixiContainer.value) {
-    try {
+  try {
+    // 调整主轨道应用大小
+    if (app && app.renderer && pixiContainer.value) {
       const newWidth = pixiContainer.value.clientWidth || 800
       const newHeight = pixiContainer.value.clientHeight || 600
       
-      // 安全地调整渲染器大小
       app.renderer.resize(newWidth, newHeight)
-      
-      // 更新视口边界
-      updateViewportBounds()
-      
-      // 重新渲染内容
-      createTimeline()
-      createTracks()
-      updatePlayhead()
-      
-      console.log(`📐 窗口大小调整: ${newWidth}x${newHeight}`)
-    } catch (error) {
-      console.warn('⚠️ 窗口大小调整失败:', error)
+      console.log(`📐 主轨道区域调整: ${newWidth}x${newHeight}`)
     }
+    
+    // 调整时间轴应用大小
+    if (timelineApp && timelineApp.renderer && timelineHeader.value) {
+      const timelineWidth = timelineHeader.value.clientWidth || 800
+      const timelineHeightValue = timelineHeader.value.clientHeight || 60
+      
+      timelineApp.renderer.resize(timelineWidth, timelineHeightValue)
+      console.log(`📐 时间轴区域调整: ${timelineWidth}x${timelineHeightValue}`)
+    }
+    
+    // 更新视口边界
+    updateViewportBounds()
+    
+    // 重新渲染内容
+    createTimeline()
+    createTracks()
+    updatePlayhead()
+    
+  } catch (error) {
+    console.warn('⚠️ 窗口大小调整失败:', error)
   }
 }
 
@@ -1514,10 +1577,18 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // 清理事件监听
+  window.removeEventListener('resize', handleResize)
+  window.removeEventListener('keydown', handleKeyDown)
+  
+  // 销毁主轨道应用
   if (app) {
-    window.removeEventListener('resize', handleResize)
-    window.removeEventListener('keydown', handleKeyDown)
     app.destroy(true)
+  }
+  
+  // 销毁时间轴应用
+  if (timelineApp) {
+    timelineApp.destroy(true)
   }
   
   // 清理滚动条事件监听
@@ -1588,10 +1659,30 @@ onUnmounted(() => {
   gap: 5px;
 }
 
+.main-workspace {
+  display: flex;
+  height: calc(100% - 80px);
+  width: 100%;
+}
+
+.timeline-and-tracks {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.timeline-header {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid #333;
+  position: relative;
+}
+
 .pixi-container {
   position: relative;
   width: 100%;
-  height: calc(100% - 80px);
+  height: 100%;
   overflow: hidden;
   cursor: grab;
   outline: none; /* 移除焦点时的边框 */
@@ -1649,16 +1740,25 @@ onUnmounted(() => {
 }
 
 .track-sidebar {
-  position: absolute;
-  left: 0;
+  position: relative;
   width: 200px;
-  height: calc(100% - 140px); /* 减去控制面板和时间线高度 */
+  height: 100%;
   background: rgba(0, 0, 0, 0.8);
   backdrop-filter: blur(10px);
   border-right: 2px solid #333;
   overflow: hidden;
   pointer-events: auto;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+}
+
+.track-sidebar::before {
+  content: '';
+  height: 60px; /* 时间轴高度占位 */
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
 }
 
 .track-info {
@@ -1672,6 +1772,7 @@ onUnmounted(() => {
   gap: 10px;
   cursor: default;
   transition: background-color 0.2s;
+  transform: translateY(60px); /* 为时间轴占位区域偏移 */
 }
 
 .track-info:hover {
