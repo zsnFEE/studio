@@ -393,6 +393,7 @@ async function initPixi() {
     
     // 创建轨道容器
     tracksContainer = new PIXI.Container()
+    tracksContainer.x = 0
     tracksContainer.y = 0
     mainContainer.addChild(tracksContainer)
     
@@ -1050,24 +1051,38 @@ function handleWheel(event) {
     updateZoom()
   } else {
     // 滚动操作
-    const scrollSpeed = 50 // 增加滚动速度
+    const scrollSpeed = 80 // 增加滚动速度
     
     if (event.shiftKey) {
-      // 水平滚动
+      // 水平滚动 - 修复计算逻辑
       const containerWidth = pixiContainer.value?.clientWidth || 800
       const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
       const maxScrollX = Math.max(0, contentWidth - containerWidth)
       
-      const deltaX = event.deltaY > 0 ? scrollSpeed : -scrollSpeed
-      scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value + deltaX))
+      // 修复滚动方向和增量计算
+      let newScrollX = scrollX.value
+      if (event.deltaY > 0) {
+        newScrollX += scrollSpeed // 向右滚动
+      } else {
+        newScrollX -= scrollSpeed // 向左滚动
+      }
+      
+      scrollX.value = Math.max(0, Math.min(maxScrollX, newScrollX))
+      console.log('水平滚动:', scrollX.value, '最大值:', maxScrollX, '内容宽度:', contentWidth)
     } else {
       // 垂直滚动
       const containerHeight = pixiContainer.value?.clientHeight || 400
       const contentHeight = tracks.value.length * trackHeight * zoomY.value
       const maxScrollY = Math.max(0, contentHeight - containerHeight)
       
-      const deltaY = event.deltaY > 0 ? scrollSpeed : -scrollSpeed
-      scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value + deltaY))
+      let newScrollY = scrollY.value
+      if (event.deltaY > 0) {
+        newScrollY += scrollSpeed // 向下滚动
+      } else {
+        newScrollY -= scrollSpeed // 向上滚动
+      }
+      
+      scrollY.value = Math.max(0, Math.min(maxScrollY, newScrollY))
     }
     updateViewport()
   }
@@ -1103,10 +1118,16 @@ function handleMouseMove(event) {
       const maxScrollX = Math.max(0, contentWidth - containerWidth)
       const maxScrollY = Math.max(0, contentHeight - containerHeight)
       
-      scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value - deltaX))
-      scrollY.value = Math.max(0, Math.min(maxScrollY, scrollY.value - deltaY))
+      // 修复鼠标拖拽滚动计算
+      const newScrollX = scrollX.value - deltaX
+      const newScrollY = scrollY.value - deltaY
+      
+      scrollX.value = Math.max(0, Math.min(maxScrollX, newScrollX))
+      scrollY.value = Math.max(0, Math.min(maxScrollY, newScrollY))
       
       updateViewport()
+      
+      console.log('鼠标拖拽滚动 - deltaX:', deltaX, 'deltaY:', deltaY, 'scrollX:', scrollX.value, 'scrollY:', scrollY.value)
     }
     
     mouse.lastX = event.clientX
@@ -1135,13 +1156,17 @@ function updateViewport() {
     mainContainer.y = -scrollY.value
   }
   
-  // 确保轨道容器正确定位
+  // 确保轨道容器正确定位（水平和垂直滚动）
   if (tracksContainer) {
+    tracksContainer.x = -scrollX.value
     tracksContainer.y = -scrollY.value
   }
   
+  // 确保播放头跟随水平滚动
   updatePlayhead()
   drawTimeline()
+  
+  console.log('视口更新 - scrollX:', scrollX.value, 'scrollY:', scrollY.value)
 }
 
 // 更新播放头
@@ -1218,11 +1243,55 @@ function formatTime(seconds) {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
+// 键盘事件处理
+function handleKeyDown(event) {
+  const scrollSpeed = 100
+  
+  if (event.key === 'ArrowLeft') {
+    // 向左滚动
+    const containerWidth = pixiContainer.value?.clientWidth || 800
+    const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+    const maxScrollX = Math.max(0, contentWidth - containerWidth)
+    
+    scrollX.value = Math.max(0, scrollX.value - scrollSpeed)
+    updateViewport()
+    event.preventDefault()
+  } else if (event.key === 'ArrowRight') {
+    // 向右滚动
+    const containerWidth = pixiContainer.value?.clientWidth || 800
+    const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+    const maxScrollX = Math.max(0, contentWidth - containerWidth)
+    
+    scrollX.value = Math.min(maxScrollX, scrollX.value + scrollSpeed)
+    updateViewport()
+    event.preventDefault()
+  } else if (event.key === 'ArrowUp') {
+    // 向上滚动
+    const containerHeight = pixiContainer.value?.clientHeight || 400
+    const contentHeight = tracks.value.length * trackHeight * zoomY.value
+    const maxScrollY = Math.max(0, contentHeight - containerHeight)
+    
+    scrollY.value = Math.max(0, scrollY.value - scrollSpeed)
+    updateViewport()
+    event.preventDefault()
+  } else if (event.key === 'ArrowDown') {
+    // 向下滚动
+    const containerHeight = pixiContainer.value?.clientHeight || 400
+    const contentHeight = tracks.value.length * trackHeight * zoomY.value
+    const maxScrollY = Math.max(0, contentHeight - containerHeight)
+    
+    scrollY.value = Math.min(maxScrollY, scrollY.value + scrollSpeed)
+    updateViewport()
+    event.preventDefault()
+  }
+}
+
 // 生命周期
 onMounted(async () => {
   await nextTick()
   await initPixi()
   window.addEventListener('resize', handleResize)
+  window.addEventListener('keydown', handleKeyDown)
 })
 
 onUnmounted(() => {
@@ -1231,6 +1300,7 @@ onUnmounted(() => {
   }
   if (app) {
     window.removeEventListener('resize', handleResize)
+    window.removeEventListener('keydown', handleKeyDown)
     app.destroy(true)
   }
   
@@ -1239,6 +1309,11 @@ onUnmounted(() => {
   document.removeEventListener('pointerup', stopClipDrag)
   clipGraphicsCache.clear()
   dragPreviewGraphics = null
+  
+  // 清理拖拽超时
+  if (dragUpdateTimeout) {
+    clearTimeout(dragUpdateTimeout)
+  }
 })
 </script>
 
