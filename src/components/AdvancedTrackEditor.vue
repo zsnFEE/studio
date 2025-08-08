@@ -57,6 +57,9 @@
         
         <!-- 轨道信息列表 -->
         <div class="tracks-sidebar-content" :style="{ transform: `translateY(-${scrollY}px)` }">
+          <div class="debug-info" style="position: absolute; top: -20px; left: 0; color: #fff; font-size: 10px; z-index: 100;">
+            轨道数: {{ tracks.length }}, 缩放: {{ zoomY.value }}, 滚动: {{ scrollY }}
+          </div>
           <div 
             v-for="(track, index) in tracks" 
             :key="track.id"
@@ -73,30 +76,33 @@
               </div>
               
               <div class="track-controls">
-                <t-button 
-                  size="small" 
-                  :theme="track.isSolo ? 'warning' : 'default'"
-                  @click="toggleSolo(track.id)"
-                >
-                  S
-                </t-button>
-                <t-button 
-                  size="small" 
-                  :theme="track.isMuted ? 'danger' : 'default'"
-                  @click="toggleMute(track.id)"
-                >
-                  M
-                </t-button>
-              </div>
-              
-              <div class="volume-control">
-                <t-slider 
-                  v-model="track.volume" 
-                  :min="0" 
-                  :max="100"
-                  size="small"
-                  vertical
-                />
+                <div class="track-buttons">
+                  <t-button 
+                    size="small" 
+                    :theme="track.isSolo ? 'warning' : 'default'"
+                    @click="toggleSolo(track.id)"
+                  >
+                    S
+                  </t-button>
+                  <t-button 
+                    size="small" 
+                    :theme="track.isMuted ? 'danger' : 'default'"
+                    @click="toggleMute(track.id)"
+                  >
+                    M
+                  </t-button>
+                </div>
+                
+                <div class="volume-control">
+                  <span class="volume-label">{{ track.volume }}</span>
+                  <t-slider 
+                    v-model="track.volume" 
+                    :min="0" 
+                    :max="100"
+                    size="small"
+                    :style="{ width: '40px' }"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -1411,19 +1417,22 @@ onUnmounted(() => {
 .tracks-sidebar-content {
   position: relative;
   overflow: hidden;
+  height: calc(100% - 60px); /* 减去timeline-placeholder的高度 */
+  min-height: 400px;
 }
 
 .track-info {
   position: absolute;
   width: 100%;
-  padding: 15px;
+  padding: 8px 12px;
   box-sizing: border-box;
   border-bottom: 1px solid #333;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  justify-content: center;
   cursor: default;
   transition: background-color 0.2s;
+  background: rgba(0, 0, 0, 0.3);
 }
 
 .track-info:hover {
@@ -1431,10 +1440,16 @@ onUnmounted(() => {
 }
 
 .track-content {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  width: 100%;
+}
+
+.track-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .track-header h4 {
@@ -1453,21 +1468,38 @@ onUnmounted(() => {
 
 .track-controls {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
+  margin-top: 4px;
+}
+
+.track-buttons {
+  display: flex;
+  gap: 6px;
 }
 
 .track-controls .t-button {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   font-weight: bold;
-  font-size: 12px;
+  font-size: 11px;
+  padding: 0;
+  min-width: 24px;
 }
 
 .volume-control {
-  flex: 1;
   display: flex;
-  justify-content: center;
   align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.volume-label {
+  color: #999;
+  font-size: 10px;
+  min-width: 20px;
+  text-align: right;
 }
 
 .pixi-workspace {
