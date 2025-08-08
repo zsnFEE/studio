@@ -161,7 +161,7 @@ let timelineCtx = null
 let clipGraphicsCache = new Map() // 缓存clip图形对象
 let dragPreviewGraphics = null    // 拖拽预览图形
 let lastRenderTime = 0           // 最后渲染时间
-const RENDER_THROTTLE = 200      // 渲染节流 (5fps) - 大幅降低更新频率
+const RENDER_THROTTLE = 500      // 渲染节流 (2fps) - 多clip场景下进一步降低频率
 
 // 鼠标和拖拽状态
 const mouse = reactive({
@@ -195,7 +195,7 @@ const viewportEndTime = computed(() => {
   return viewportStartTime.value + (containerWidth / (pixelsPerSecond * zoomX.value))
 })
 
-// 轨道数据
+// 轨道数据 - 增加更多clip
 const tracks = ref([
   {
     id: 1,
@@ -206,9 +206,13 @@ const tracks = ref([
     isSolo: false,
     isMuted: false,
     clips: [
-      { id: 1, name: '主旋律_1', startTime: 0, duration: 15, color: '#10b981', waveformData: [] },
-      { id: 2, name: '主旋律_2', startTime: 20, duration: 12, color: '#059669', waveformData: [] },
-      { id: 3, name: '主旋律_3', startTime: 40, duration: 18, color: '#047857', waveformData: [] }
+      { id: 1, name: '主旋律_1', startTime: 0, duration: 8, color: '#10b981', waveformData: [] },
+      { id: 2, name: '主旋律_2', startTime: 10, duration: 6, color: '#059669', waveformData: [] },
+      { id: 3, name: '主旋律_3', startTime: 18, duration: 10, color: '#047857', waveformData: [] },
+      { id: 4, name: '主旋律_4', startTime: 30, duration: 8, color: '#065f46', waveformData: [] },
+      { id: 5, name: '主旋律_5', startTime: 40, duration: 12, color: '#064e3b', waveformData: [] },
+      { id: 6, name: '主旋律_6', startTime: 55, duration: 9, color: '#134e4a', waveformData: [] },
+      { id: 7, name: '主旋律_7', startTime: 67, duration: 11, color: '#0f766e', waveformData: [] }
     ]
   },
   {
@@ -220,10 +224,16 @@ const tracks = ref([
     isSolo: false,
     isMuted: false,
     clips: [
-      { id: 4, name: '鼓点_1', startTime: 0, duration: 8, color: '#f59e0b', waveformData: [] },
-      { id: 5, name: '鼓点_2', startTime: 12, duration: 10, color: '#d97706', waveformData: [] },
-      { id: 6, name: '鼓点_3', startTime: 25, duration: 8, color: '#f59e0b', waveformData: [] },
-      { id: 7, name: '鼓点_4', startTime: 40, duration: 12, color: '#b45309', waveformData: [] }
+      { id: 8, name: '鼓点_1', startTime: 0, duration: 4, color: '#f59e0b', waveformData: [] },
+      { id: 9, name: '鼓点_2', startTime: 6, duration: 4, color: '#d97706', waveformData: [] },
+      { id: 10, name: '鼓点_3', startTime: 12, duration: 6, color: '#b45309', waveformData: [] },
+      { id: 11, name: '鼓点_4', startTime: 20, duration: 4, color: '#92400e', waveformData: [] },
+      { id: 12, name: '鼓点_5', startTime: 26, duration: 8, color: '#78350f', waveformData: [] },
+      { id: 13, name: '鼓点_6', startTime: 36, duration: 5, color: '#451a03', waveformData: [] },
+      { id: 14, name: '鼓点_7', startTime: 43, duration: 7, color: '#f59e0b', waveformData: [] },
+      { id: 15, name: '鼓点_8', startTime: 52, duration: 6, color: '#d97706', waveformData: [] },
+      { id: 16, name: '鼓点_9', startTime: 60, duration: 8, color: '#b45309', waveformData: [] },
+      { id: 17, name: '鼓点_10', startTime: 70, duration: 5, color: '#92400e', waveformData: [] }
     ]
   },
   {
@@ -235,8 +245,12 @@ const tracks = ref([
     isSolo: false,
     isMuted: false,
     clips: [
-      { id: 8, name: '贝斯_1', startTime: 0, duration: 25, color: '#3b82f6', waveformData: [] },
-      { id: 9, name: '贝斯_2', startTime: 30, duration: 20, color: '#2563eb', waveformData: [] }
+      { id: 18, name: '贝斯_1', startTime: 0, duration: 12, color: '#3b82f6', waveformData: [] },
+      { id: 19, name: '贝斯_2', startTime: 14, duration: 10, color: '#2563eb', waveformData: [] },
+      { id: 20, name: '贝斯_3', startTime: 26, duration: 14, color: '#1d4ed8', waveformData: [] },
+      { id: 21, name: '贝斯_4', startTime: 42, duration: 8, color: '#1e40af', waveformData: [] },
+      { id: 22, name: '贝斯_5', startTime: 52, duration: 16, color: '#1e3a8a', waveformData: [] },
+      { id: 23, name: '贝斯_6', startTime: 70, duration: 8, color: '#1d4ed8', waveformData: [] }
     ]
   },
   {
@@ -248,9 +262,13 @@ const tracks = ref([
     isSolo: false,
     isMuted: false,
     clips: [
-      { id: 10, name: '和弦_1', startTime: 5, duration: 18, color: '#8b5cf6', waveformData: [] },
-      { id: 11, name: '和弦_2', startTime: 30, duration: 15, color: '#7c3aed', waveformData: [] },
-      { id: 12, name: '和弦_3', startTime: 50, duration: 20, color: '#6d28d9', waveformData: [] }
+      { id: 24, name: '和弦_1', startTime: 2, duration: 10, color: '#8b5cf6', waveformData: [] },
+      { id: 25, name: '和弦_2', startTime: 14, duration: 8, color: '#7c3aed', waveformData: [] },
+      { id: 26, name: '和弦_3', startTime: 24, duration: 12, color: '#6d28d9', waveformData: [] },
+      { id: 27, name: '和弦_4', startTime: 38, duration: 9, color: '#5b21b6', waveformData: [] },
+      { id: 28, name: '和弦_5', startTime: 49, duration: 11, color: '#4c1d95', waveformData: [] },
+      { id: 29, name: '和弦_6', startTime: 62, duration: 7, color: '#581c87', waveformData: [] },
+      { id: 30, name: '和弦_7', startTime: 71, duration: 6, color: '#6b21a8', waveformData: [] }
     ]
   },
   {
@@ -262,8 +280,14 @@ const tracks = ref([
     isSolo: false,
     isMuted: false,
     clips: [
-      { id: 13, name: '合成器_1', startTime: 10, duration: 20, color: '#ef4444', waveformData: [] },
-      { id: 14, name: '合成器_2', startTime: 35, duration: 15, color: '#dc2626', waveformData: [] }
+      { id: 31, name: '合成器_1', startTime: 4, duration: 6, color: '#ef4444', waveformData: [] },
+      { id: 32, name: '合成器_2', startTime: 12, duration: 8, color: '#dc2626', waveformData: [] },
+      { id: 33, name: '合成器_3', startTime: 22, duration: 5, color: '#b91c1c', waveformData: [] },
+      { id: 34, name: '合成器_4', startTime: 29, duration: 9, color: '#991b1b', waveformData: [] },
+      { id: 35, name: '合成器_5', startTime: 40, duration: 7, color: '#7f1d1d', waveformData: [] },
+      { id: 36, name: '合成器_6', startTime: 49, duration: 10, color: '#450a0a', waveformData: [] },
+      { id: 37, name: '合成器_7', startTime: 61, duration: 6, color: '#ef4444', waveformData: [] },
+      { id: 38, name: '合成器_8', startTime: 69, duration: 8, color: '#dc2626', waveformData: [] }
     ]
   },
   {
@@ -275,9 +299,14 @@ const tracks = ref([
     isSolo: false,
     isMuted: false,
     clips: [
-      { id: 15, name: '主歌', startTime: 8, duration: 16, color: '#f97316', waveformData: [] },
-      { id: 16, name: '副歌', startTime: 30, duration: 20, color: '#ea580c', waveformData: [] },
-      { id: 17, name: '桥段', startTime: 55, duration: 10, color: '#c2410c', waveformData: [] }
+      { id: 39, name: '人声_1', startTime: 8, duration: 6, color: '#f97316', waveformData: [] },
+      { id: 40, name: '人声_2', startTime: 16, duration: 8, color: '#ea580c', waveformData: [] },
+      { id: 41, name: '人声_3', startTime: 26, duration: 5, color: '#c2410c', waveformData: [] },
+      { id: 42, name: '人声_4', startTime: 33, duration: 7, color: '#9a3412', waveformData: [] },
+      { id: 43, name: '人声_5', startTime: 42, duration: 9, color: '#7c2d12', waveformData: [] },
+      { id: 44, name: '人声_6', startTime: 53, duration: 6, color: '#431407', waveformData: [] },
+      { id: 45, name: '人声_7', startTime: 61, duration: 8, color: '#f97316', waveformData: [] },
+      { id: 46, name: '人声_8', startTime: 71, duration: 5, color: '#ea580c', waveformData: [] }
     ]
   }
 ])
@@ -535,24 +564,35 @@ function createTracks() {
   tracksContainer.y = 0
 }
 
-// 延迟更新策略，减少卡顿
+// 高性能拖拽更新策略
 let dragUpdateTimeout = null
+let isUpdating = false
 
 function updateClipPositions() {
+  // 防止重复更新
+  if (isUpdating) return
+  
   // 清除之前的延迟更新
   if (dragUpdateTimeout) {
     clearTimeout(dragUpdateTimeout)
   }
   
-  // 使用较长的延迟，减少更新频率
+  // 进一步延长延迟，减少多clip场景下的卡顿
   dragUpdateTimeout = setTimeout(() => {
-    if (clipDrag.isDragging && clipDrag.draggedClip) {
-      const draggedClipContainer = clipGraphicsCache.get(clipDrag.draggedClip.id)
-      if (draggedClipContainer) {
-        updateSingleClipPosition(clipDrag.draggedClip, draggedClipContainer)
+    if (clipDrag.isDragging && clipDrag.draggedClip && !isUpdating) {
+      isUpdating = true
+      
+      try {
+        // 只更新拖拽中的clip，完全跳过其他clip
+        const draggedClipContainer = clipGraphicsCache.get(clipDrag.draggedClip.id)
+        if (draggedClipContainer) {
+          updateSingleClipPosition(clipDrag.draggedClip, draggedClipContainer)
+        }
+      } finally {
+        isUpdating = false
       }
     }
-  }, 100) // 100ms延迟，降低更新频率
+  }, 300) // 增加到300ms延迟，进一步降低频率
 }
 
 // 简化的clip位置更新（确保波形跟随）
@@ -860,27 +900,23 @@ function detectTargetTrack(mouseY) {
   return trackIndex >= 0 && trackIndex < tracks.value.length ? trackIndex : null
 }
 
-// 简化的拖拽位置更新，减少卡顿
+// 极简拖拽位置更新，专为多clip优化
 function updateDragPosition(event) {
   const deltaX = event.clientX - clipDrag.startX
   
   // 计算新时间位置
   const newTime = clipDrag.startTime + (deltaX / (pixelsPerSecond * zoomX.value))
   
-  // 检测目标轨道（降低检测频率）
-  const targetTrackIndex = detectTargetTrack(event.clientY)
-  clipDrag.targetTrack = targetTrackIndex !== null ? tracks.value[targetTrackIndex] : null
+  // 更大的阈值，减少频繁更新
+  const finalTime = Math.max(0, Math.round(newTime * 2) / 2) // 改为0.5秒对齐，减少计算
   
-  // 简化的网格对齐，不使用复杂的停靠逻辑
-  const finalTime = Math.max(0, Math.round(newTime * 4) / 4)
-  
-  if (clipDrag.draggedClip && Math.abs(clipDrag.draggedClip.startTime - finalTime) > 0.1) {
+  if (clipDrag.draggedClip && Math.abs(clipDrag.draggedClip.startTime - finalTime) > 0.5) {
     clipDrag.draggedClip.startTime = finalTime
     
-    // 只更新预览，不实时更新clip渲染
-    updateDragPreview(finalTime, targetTrackIndex, null)
+    // 暂时禁用轨道检测和预览更新，只在拖拽结束时处理
+    // 这样可以大幅减少多clip场景下的计算负担
     
-    // 降低clip位置更新频率
+    // 极低频率的clip更新
     throttledUpdateClipPositions()
   }
 }
@@ -953,52 +989,31 @@ function stopClipDrag() {
   if (clipDrag.isDragging) {
     const draggedClip = clipDrag.draggedClip
     const originalTrack = clipDrag.originalTrack
-    const targetTrack = clipDrag.targetTrack
     
     console.log('停止拖拽片段:', draggedClip?.name, '新位置:', draggedClip?.startTime)
-    console.log('原轨道:', originalTrack?.name, '目标轨道:', targetTrack?.name)
     
-    // 处理跨轨道移动
-    if (targetTrack && targetTrack.id !== originalTrack.id) {
-      // 检查目标位置是否有冲突
-      const hasConflict = targetTrack.clips.some(clip => 
-        clip.id !== draggedClip.id && hasTimeOverlap(draggedClip, clip)
-      )
-      
-      if (hasConflict) {
-        // 有冲突，移动到目标轨道最后一个clip之后
-        const lastEndTime = findLastClipEndTime(targetTrack)
-        draggedClip.startTime = lastEndTime
-        console.log('检测到冲突，移动到轨道末尾:', lastEndTime)
-      }
-      
-      // 从原轨道移除clip
-      const originalClipIndex = originalTrack.clips.findIndex(clip => clip.id === draggedClip.id)
-      if (originalClipIndex !== -1) {
-        originalTrack.clips.splice(originalClipIndex, 1)
-      }
-      
-      // 添加到目标轨道
-      targetTrack.clips.push(draggedClip)
-      
-      console.log('跨轨道移动完成:', originalTrack.name, '->', targetTrack.name)
-    } else {
-      // 同轨道内移动，检查冲突
-      const hasConflict = originalTrack.clips.some(clip => 
-        clip.id !== draggedClip.id && hasTimeOverlap(draggedClip, clip)
-      )
-      
-      if (hasConflict) {
-        // 有冲突，移动到轨道末尾
-        const lastEndTime = findLastClipEndTime(originalTrack)
-        draggedClip.startTime = lastEndTime
-        console.log('同轨道冲突，移动到轨道末尾:', lastEndTime)
-      }
+    // 简化处理：暂时只支持同轨道内移动，减少复杂度
+    // 检查同轨道内冲突
+    const hasConflict = originalTrack.clips.some(clip => 
+      clip.id !== draggedClip.id && hasTimeOverlap(draggedClip, clip)
+    )
+    
+    if (hasConflict) {
+      // 有冲突，移动到轨道末尾
+      const lastEndTime = findLastClipEndTime(originalTrack)
+      draggedClip.startTime = lastEndTime
+      console.log('检测到冲突，移动到轨道末尾:', lastEndTime)
     }
     
     // 清除拖拽预览
     if (dragPreviewGraphics) {
       dragPreviewGraphics.clear()
+    }
+    
+    // 清除更新超时
+    if (dragUpdateTimeout) {
+      clearTimeout(dragUpdateTimeout)
+      dragUpdateTimeout = null
     }
     
     // 最终重绘确保一致性
@@ -1014,6 +1029,7 @@ function stopClipDrag() {
   clipDrag.pendingUpdate = false
   clipDrag.snapTime = 0
   clipDrag.snapToClip = null
+  isUpdating = false // 重置更新标志
   
   document.removeEventListener('pointermove', handleClipDragOptimized)
   document.removeEventListener('pointerup', stopClipDrag)
