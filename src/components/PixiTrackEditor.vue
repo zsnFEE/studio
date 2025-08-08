@@ -363,8 +363,15 @@ const sortedTracks = computed(() => {
 const horizontalThumbStyle = computed(() => {
   const containerWidth = pixiContainer.value?.clientWidth || 800
   const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
+  
+  if (contentWidth <= containerWidth) {
+    // 内容不超出容器时，隐藏滚动条
+    return { width: '0px', left: '0px' }
+  }
+  
   const thumbWidth = Math.max(20, (containerWidth / contentWidth) * containerWidth)
-  const thumbLeft = (scrollX.value / contentWidth) * containerWidth
+  const maxScrollX = contentWidth - containerWidth
+  const thumbLeft = maxScrollX > 0 ? (scrollX.value / maxScrollX) * (containerWidth - thumbWidth) : 0
   
   return {
     width: thumbWidth + 'px',
@@ -375,8 +382,15 @@ const horizontalThumbStyle = computed(() => {
 const verticalThumbStyle = computed(() => {
   const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
   const contentHeight = tracks.value.length * trackHeight * zoomY.value
+  
+  if (contentHeight <= containerHeight) {
+    // 内容不超出容器时，隐藏滚动条
+    return { height: '0px', top: '0px' }
+  }
+  
   const thumbHeight = Math.max(20, (containerHeight / contentHeight) * containerHeight)
-  const thumbTop = (scrollY.value / contentHeight) * containerHeight
+  const maxScrollY = contentHeight - containerHeight
+  const thumbTop = maxScrollY > 0 ? (scrollY.value / maxScrollY) * (containerHeight - thumbHeight) : 0
   
   return {
     height: thumbHeight + 'px',
@@ -1082,6 +1096,11 @@ function handleWheel(event) {
 }
 
 function handleMouseDown(event) {
+  // 如果正在拖拽clip或轨道，不处理容器拖拽
+  if (clipDrag.isDragging || trackDrag.isDragging) {
+    return
+  }
+  
   const rect = pixiContainer.value.getBoundingClientRect()
   const localY = event.clientY - rect.top
   
@@ -1103,6 +1122,11 @@ function handleMouseDown(event) {
 }
 
 function handleMouseMove(event) {
+  // 如果正在拖拽clip或轨道，不处理容器拖拽
+  if (clipDrag.isDragging || trackDrag.isDragging) {
+    return
+  }
+  
   if (mouse.isDown) {
     const deltaX = event.clientX - mouse.lastX
     const deltaY = event.clientY - mouse.lastY
@@ -1117,7 +1141,7 @@ function handleMouseMove(event) {
       const containerWidth = pixiContainer.value?.clientWidth || 800
       const containerHeight = (pixiContainer.value?.clientHeight || 600) - timelineHeight
       const maxScrollX = Math.max(0, maxDuration * pixelsPerSecond * zoomX.value - containerWidth)
-      const maxScrollY = Math.max(0, tracks.value.length * trackHeight * zoomY.value - containerHeight)
+      const maxScrollY = Math.max(0, Math.min(tracks.value.length * trackHeight * zoomY.value - containerHeight, tracks.value.length * trackHeight * zoomY.value))
       
       // 应用滚动（反向移动）
       scrollX.value = Math.max(0, Math.min(maxScrollX, scrollX.value - deltaX))
@@ -1132,17 +1156,20 @@ function handleMouseMove(event) {
 }
 
 function handleMouseUp() {
-  mouse.isDown = false
-  mouse.isDragging = false
+  // 只有在非clip/轨道拖拽时才处理容器鼠标释放
+  if (!clipDrag.isDragging && !trackDrag.isDragging) {
+    mouse.isDown = false
+    mouse.isDragging = false
+    
+    // 恢复鼠标样式
+    if (pixiContainer.value) {
+      pixiContainer.value.style.cursor = 'grab'
+    }
+  }
   
   // 停止滚动条拖拽
   scrollbarDrag.isHorizontalDragging = false
   scrollbarDrag.isVerticalDragging = false
-  
-  // 恢复鼠标样式
-  if (pixiContainer.value) {
-    pixiContainer.value.style.cursor = 'grab'
-  }
 }
 
 function handleFocus() {
@@ -1158,9 +1185,11 @@ function handleHorizontalScrollClick(event) {
   const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
   const maxScrollX = Math.max(0, contentWidth - containerWidth)
   
+  if (maxScrollX <= 0) return // 无需滚动
+  
   // 计算点击位置对应的滚动值
   const scrollRatio = clickX / rect.width
-  scrollX.value = Math.max(0, Math.min(maxScrollX, scrollRatio * contentWidth))
+  scrollX.value = Math.max(0, Math.min(maxScrollX, scrollRatio * maxScrollX))
   updateViewport()
 }
 
@@ -1171,9 +1200,11 @@ function handleVerticalScrollClick(event) {
   const contentHeight = tracks.value.length * trackHeight * zoomY.value
   const maxScrollY = Math.max(0, contentHeight - containerHeight)
   
+  if (maxScrollY <= 0) return // 无需滚动
+  
   // 计算点击位置对应的滚动值
   const scrollRatio = clickY / rect.height
-  scrollY.value = Math.max(0, Math.min(maxScrollY, scrollRatio * contentHeight))
+  scrollY.value = Math.max(0, Math.min(maxScrollY, scrollRatio * maxScrollY))
   updateViewport()
 }
 
@@ -1204,11 +1235,13 @@ function handleScrollbarDrag(event) {
     const contentWidth = maxDuration * pixelsPerSecond * zoomX.value
     const maxScrollX = Math.max(0, contentWidth - containerWidth)
     
-    // 根据滚动条的移动比例计算滚动值
-    const scrollRatio = deltaX / containerWidth
-    const newScrollX = scrollbarDrag.startScrollX + scrollRatio * contentWidth
-    scrollX.value = Math.max(0, Math.min(maxScrollX, newScrollX))
-    updateViewport()
+    if (maxScrollX > 0) {
+      // 根据滚动条的移动比例计算滚动值
+      const scrollRatio = deltaX / containerWidth
+      const newScrollX = scrollbarDrag.startScrollX + scrollRatio * maxScrollX
+      scrollX.value = Math.max(0, Math.min(maxScrollX, newScrollX))
+      updateViewport()
+    }
   }
   
   if (scrollbarDrag.isVerticalDragging) {
@@ -1217,11 +1250,13 @@ function handleScrollbarDrag(event) {
     const contentHeight = tracks.value.length * trackHeight * zoomY.value
     const maxScrollY = Math.max(0, contentHeight - containerHeight)
     
-    // 根据滚动条的移动比例计算滚动值
-    const scrollRatio = deltaY / containerHeight
-    const newScrollY = scrollbarDrag.startScrollY + scrollRatio * contentHeight
-    scrollY.value = Math.max(0, Math.min(maxScrollY, newScrollY))
-    updateViewport()
+    if (maxScrollY > 0) {
+      // 根据滚动条的移动比例计算滚动值
+      const scrollRatio = deltaY / containerHeight
+      const newScrollY = scrollbarDrag.startScrollY + scrollRatio * maxScrollY
+      scrollY.value = Math.max(0, Math.min(maxScrollY, newScrollY))
+      updateViewport()
+    }
   }
 }
 
@@ -1262,14 +1297,17 @@ function handleClipDrag(event) {
   const newTime = clipDrag.startTime + (deltaX / (pixelsPerSecond * zoomX.value))
   const snapTime = Math.max(0, Math.round(newTime * 4) / 4) // 1/4秒对齐
   
-  // 更新clip位置
-  if (clipDrag.draggedClip) {
+  // 只有在位置真正改变时才更新
+  if (clipDrag.draggedClip && Math.abs(clipDrag.draggedClip.startTime - snapTime) > 0.01) {
     clipDrag.draggedClip.startTime = snapTime
+    
+    // 节流重新渲染
+    clearTimeout(handleClipDrag.timeoutId)
+    handleClipDrag.timeoutId = setTimeout(() => {
+      createTracks()
+      needsRedraw = true
+    }, 16) // 约60fps
   }
-  
-  // 重新渲染
-  createTracks()
-  needsRedraw = true
 }
 
 function stopClipDrag() {
@@ -1320,13 +1358,15 @@ function handleTrackDrag(event) {
   
   // 只在order真正改变时更新
   if (draggedTrack.order !== newOrder) {
+    const oldOrder = draggedTrack.order
+    
     // 更新其他轨道的order
     tracks.value.forEach(track => {
       if (track.id === trackDrag.draggedTrackId) {
         track.order = newOrder
-      } else if (track.order >= Math.min(draggedTrack.order, newOrder) && 
-                 track.order <= Math.max(draggedTrack.order, newOrder)) {
-        if (newOrder > draggedTrack.order) {
+      } else if (track.order >= Math.min(oldOrder, newOrder) && 
+                 track.order <= Math.max(oldOrder, newOrder)) {
+        if (newOrder > oldOrder) {
           track.order -= 1
         } else {
           track.order += 1
@@ -1334,9 +1374,12 @@ function handleTrackDrag(event) {
       }
     })
     
-    // 重新渲染
-    createTracks()
-    needsRedraw = true
+    // 节流重新渲染
+    clearTimeout(handleTrackDrag.timeoutId)
+    handleTrackDrag.timeoutId = setTimeout(() => {
+      createTracks()
+      needsRedraw = true
+    }, 16) // 约60fps
   }
 }
 
