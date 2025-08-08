@@ -175,11 +175,16 @@ const clipDrag = reactive({
   isDragging: false,
   draggedClip: null,
   draggedClipGraphics: null,  // 被拖拽的clip图形对象
+  originalTrack: null,        // 原始轨道
+  targetTrack: null,          // 目标轨道
   startX: 0,
+  startY: 0,                  // 添加Y坐标
   startTime: 0,
   offsetX: 0,
   lastUpdateTime: 0,          // 最后更新时间
-  pendingUpdate: false        // 是否有待处理的更新
+  pendingUpdate: false,       // 是否有待处理的更新
+  snapTime: 0,                // 停靠时间
+  snapToClip: null           // 停靠到的clip
 })
 
 // 计算属性
@@ -529,18 +534,43 @@ function createTracks() {
   tracksContainer.y = 0
 }
 
-// 高性能轨道重绘（仅更新位置）
+// 高性能轨道重绘（仅更新位置）- 优化版本
 function updateClipPositions() {
-  tracks.value.forEach((track, trackIndex) => {
-    track.clips.forEach(clip => {
-      const clipContainer = clipGraphicsCache.get(clip.id)
-      if (clipContainer && clipContainer.children.length > 0) {
-        const newClipX = clip.startTime * pixelsPerSecond * zoomX.value
-        
-        // 直接使用完整重绘来确保波形跟随
-        recreateClip(clip, track, trackIndex, clipContainer)
-      }
-    })
+  // 只更新正在拖拽的clip，避免全量重绘
+  if (clipDrag.isDragging && clipDrag.draggedClip) {
+    const draggedClipContainer = clipGraphicsCache.get(clipDrag.draggedClip.id)
+    if (draggedClipContainer) {
+      updateSingleClipPosition(clipDrag.draggedClip, draggedClipContainer)
+    }
+  }
+}
+
+// 更新单个clip位置（高性能版本）
+function updateSingleClipPosition(clip, clipContainer) {
+  const newClipX = clip.startTime * pixelsPerSecond * zoomX.value
+  
+  // 快速更新位置而不重新创建所有对象
+  clipContainer.children.forEach((child, index) => {
+    if (index === 0 && child.clear) {
+      // clip背景
+      const color = parseInt(clip.color.replace('#', ''), 16)
+      const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
+      const clipHeight = trackHeight * zoomY.value - 20
+      
+      child.clear()
+      child.beginFill(color, 0.8)
+      child.lineStyle(2, color, 1)
+      child.drawRoundedRect(newClipX, 10, clipWidth, clipHeight, 6)
+      child.endFill()
+    } else if (index === 1 && child.clear) {
+      // 波形
+      const clipWidth = clip.duration * pixelsPerSecond * zoomX.value
+      const clipHeight = trackHeight * zoomY.value - 20
+      redrawWaveform(child, clip, newClipX, clipWidth, clipHeight)
+    } else if (child.text !== undefined) {
+      // 文字
+      child.x = newClipX + 8
+    }
   })
 }
 
@@ -742,25 +772,30 @@ function handleClipMouseDown(event, clip, track, clipContainer) {
   clipDrag.isDragging = true
   clipDrag.draggedClip = clip
   clipDrag.draggedClipGraphics = clipContainer
+  clipDrag.originalTrack = track
+  clipDrag.targetTrack = track
   clipDrag.startX = event.data.global.x
+  clipDrag.startY = event.data.global.y
   clipDrag.startTime = clip.startTime
   clipDrag.offsetX = 0
   clipDrag.lastUpdateTime = Date.now()
   clipDrag.pendingUpdate = false
+  clipDrag.snapTime = 0
+  clipDrag.snapToClip = null
   
   selectedClip.value = clip
   
   // 创建拖拽预览（半透明副本）
   if (!dragPreviewGraphics) {
     dragPreviewGraphics = new PIXI.Graphics()
-    dragPreviewGraphics.alpha = 0.5
+    dragPreviewGraphics.alpha = 0.8
     tracksContainer.addChild(dragPreviewGraphics)
   }
   
   document.addEventListener('pointermove', handleClipDragOptimized)
   document.addEventListener('pointerup', stopClipDrag)
   
-  console.log('开始拖拽片段:', clip.name)
+  console.log('开始拖拽片段:', clip.name, '原轨道:', track.name)
 }
 
 // 优化的拖拽处理函数
@@ -787,39 +822,186 @@ function handleClipDragOptimized(event) {
   clipDrag.lastUpdateTime = currentTime
 }
 
-// 更新拖拽位置（分离的函数）
+// 查找停靠点
+function findSnapPoint(time, targetTrackIndex) {
+  const snapDistance = 0.5 // 0.5秒内停靠
+  let bestSnapTime = time
+  let snapToClip = null
+  
+  if (targetTrackIndex >= 0 && targetTrackIndex < tracks.value.length) {
+    const targetTrack = tracks.value[targetTrackIndex]
+    
+    // 检查与其他clip的停靠
+    for (const clip of targetTrack.clips) {
+      if (clip.id === clipDrag.draggedClip?.id) continue
+      
+      // 停靠到clip开始位置
+      if (Math.abs(time - clip.startTime) < snapDistance) {
+        bestSnapTime = clip.startTime
+        snapToClip = clip
+        break
+      }
+      
+      // 停靠到clip结束位置
+      const clipEndTime = clip.startTime + clip.duration
+      if (Math.abs(time - clipEndTime) < snapDistance) {
+        bestSnapTime = clipEndTime
+        snapToClip = clip
+        break
+      }
+    }
+  }
+  
+  return { snapTime: Math.max(0, bestSnapTime), snapToClip }
+}
+
+// 检测目标轨道
+function detectTargetTrack(mouseY) {
+  const containerRect = pixiContainer.value?.getBoundingClientRect()
+  if (!containerRect) return null
+  
+  const relativeY = mouseY - containerRect.top + scrollY.value
+  const trackIndex = Math.floor(relativeY / (trackHeight * zoomY.value))
+  
+  return trackIndex >= 0 && trackIndex < tracks.value.length ? trackIndex : null
+}
+
+// 更新拖拽位置（增强版本）
 function updateDragPosition(event) {
   const deltaX = event.clientX - clipDrag.startX
-  const newTime = clipDrag.startTime + (deltaX / (pixelsPerSecond * zoomX.value))
-  const snapTime = Math.max(0, Math.round(newTime * 4) / 4) // 1/4秒对齐
+  const deltaY = event.clientY - clipDrag.startY
   
-  if (clipDrag.draggedClip && Math.abs(clipDrag.draggedClip.startTime - snapTime) > 0.01) {
-    clipDrag.draggedClip.startTime = snapTime
+  // 计算新时间位置
+  const newTime = clipDrag.startTime + (deltaX / (pixelsPerSecond * zoomX.value))
+  
+  // 检测目标轨道
+  const targetTrackIndex = detectTargetTrack(event.clientY)
+  clipDrag.targetTrack = targetTrackIndex !== null ? tracks.value[targetTrackIndex] : null
+  
+  // 查找停靠点
+  const { snapTime, snapToClip } = findSnapPoint(newTime, targetTrackIndex)
+  clipDrag.snapTime = snapTime
+  clipDrag.snapToClip = snapToClip
+  
+  // 1/4秒网格对齐（如果没有停靠）
+  const finalTime = snapToClip ? snapTime : Math.max(0, Math.round(newTime * 4) / 4)
+  
+  if (clipDrag.draggedClip && Math.abs(clipDrag.draggedClip.startTime - finalTime) > 0.01) {
+    clipDrag.draggedClip.startTime = finalTime
     
-    // 使用快速位置更新而不是完全重绘
+    // 使用快速位置更新
     throttledUpdateClipPositions()
     
     // 更新拖拽预览位置
-    if (dragPreviewGraphics && clipDrag.draggedClipGraphics) {
-      const newX = snapTime * pixelsPerSecond * zoomX.value
-      dragPreviewGraphics.clear()
-      
-      // 绘制预览框
-      const clipWidth = clipDrag.draggedClip.duration * pixelsPerSecond * zoomX.value
-      const clipHeight = trackHeight * zoomY.value - 20
-      const color = parseInt(clipDrag.draggedClip.color.replace('#', ''), 16)
-      
-      dragPreviewGraphics.lineStyle(2, color, 0.8)
-      dragPreviewGraphics.beginFill(color, 0.2)
-      dragPreviewGraphics.drawRoundedRect(newX, clipDrag.draggedClipGraphics.y + 10, clipWidth, clipHeight, 6)
-      dragPreviewGraphics.endFill()
+    updateDragPreview(finalTime, targetTrackIndex, snapToClip)
+  }
+}
+
+// 更新拖拽预览
+function updateDragPreview(time, targetTrackIndex, snapToClip) {
+  if (!dragPreviewGraphics) return
+  
+  dragPreviewGraphics.clear()
+  
+  const newX = time * pixelsPerSecond * zoomX.value
+  const clipWidth = clipDrag.draggedClip.duration * pixelsPerSecond * zoomX.value
+  const clipHeight = trackHeight * zoomY.value - 20
+  const color = parseInt(clipDrag.draggedClip.color.replace('#', ''), 16)
+  
+  // 计算Y位置
+  let previewY = 10
+  if (targetTrackIndex !== null) {
+    previewY = targetTrackIndex * trackHeight * zoomY.value + 10
+  } else {
+    // 保持原轨道位置
+    const originalTrackIndex = tracks.value.findIndex(track => 
+      track.clips.some(clip => clip.id === clipDrag.draggedClip.id)
+    )
+    previewY = originalTrackIndex * trackHeight * zoomY.value + 10
+  }
+  
+  // 绘制预览框
+  dragPreviewGraphics.lineStyle(2, color, snapToClip ? 1.0 : 0.8)
+  dragPreviewGraphics.beginFill(color, snapToClip ? 0.4 : 0.2)
+  dragPreviewGraphics.drawRoundedRect(newX, previewY, clipWidth, clipHeight, 6)
+  dragPreviewGraphics.endFill()
+  
+  // 如果有停靠，绘制停靠指示器
+  if (snapToClip) {
+    dragPreviewGraphics.lineStyle(3, 0x00ff00, 1.0)
+    dragPreviewGraphics.moveTo(newX, previewY - 5)
+    dragPreviewGraphics.lineTo(newX, previewY + clipHeight + 5)
+  }
+}
+
+// 检查时间范围重叠
+function hasTimeOverlap(clip1, clip2) {
+  const clip1End = clip1.startTime + clip1.duration
+  const clip2End = clip2.startTime + clip2.duration
+  
+  return !(clip1End <= clip2.startTime || clip2End <= clip1.startTime)
+}
+
+// 查找轨道中最后一个clip的结束时间
+function findLastClipEndTime(track) {
+  if (!track.clips.length) return 0
+  
+  let maxEndTime = 0
+  for (const clip of track.clips) {
+    const endTime = clip.startTime + clip.duration
+    if (endTime > maxEndTime) {
+      maxEndTime = endTime
     }
   }
+  return maxEndTime
 }
 
 function stopClipDrag() {
   if (clipDrag.isDragging) {
-    console.log('停止拖拽片段:', clipDrag.draggedClip?.name, '新位置:', clipDrag.draggedClip?.startTime)
+    const draggedClip = clipDrag.draggedClip
+    const originalTrack = clipDrag.originalTrack
+    const targetTrack = clipDrag.targetTrack
+    
+    console.log('停止拖拽片段:', draggedClip?.name, '新位置:', draggedClip?.startTime)
+    console.log('原轨道:', originalTrack?.name, '目标轨道:', targetTrack?.name)
+    
+    // 处理跨轨道移动
+    if (targetTrack && targetTrack.id !== originalTrack.id) {
+      // 检查目标位置是否有冲突
+      const hasConflict = targetTrack.clips.some(clip => 
+        clip.id !== draggedClip.id && hasTimeOverlap(draggedClip, clip)
+      )
+      
+      if (hasConflict) {
+        // 有冲突，移动到目标轨道最后一个clip之后
+        const lastEndTime = findLastClipEndTime(targetTrack)
+        draggedClip.startTime = lastEndTime
+        console.log('检测到冲突，移动到轨道末尾:', lastEndTime)
+      }
+      
+      // 从原轨道移除clip
+      const originalClipIndex = originalTrack.clips.findIndex(clip => clip.id === draggedClip.id)
+      if (originalClipIndex !== -1) {
+        originalTrack.clips.splice(originalClipIndex, 1)
+      }
+      
+      // 添加到目标轨道
+      targetTrack.clips.push(draggedClip)
+      
+      console.log('跨轨道移动完成:', originalTrack.name, '->', targetTrack.name)
+    } else {
+      // 同轨道内移动，检查冲突
+      const hasConflict = originalTrack.clips.some(clip => 
+        clip.id !== draggedClip.id && hasTimeOverlap(draggedClip, clip)
+      )
+      
+      if (hasConflict) {
+        // 有冲突，移动到轨道末尾
+        const lastEndTime = findLastClipEndTime(originalTrack)
+        draggedClip.startTime = lastEndTime
+        console.log('同轨道冲突，移动到轨道末尾:', lastEndTime)
+      }
+    }
     
     // 清除拖拽预览
     if (dragPreviewGraphics) {
@@ -830,10 +1012,15 @@ function stopClipDrag() {
     createTracks()
   }
   
+  // 重置拖拽状态
   clipDrag.isDragging = false
   clipDrag.draggedClip = null
   clipDrag.draggedClipGraphics = null
+  clipDrag.originalTrack = null
+  clipDrag.targetTrack = null
   clipDrag.pendingUpdate = false
+  clipDrag.snapTime = 0
+  clipDrag.snapToClip = null
   
   document.removeEventListener('pointermove', handleClipDragOptimized)
   document.removeEventListener('pointerup', stopClipDrag)
